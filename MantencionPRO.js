@@ -35,14 +35,52 @@ const MantencionPRO = ({ navigation, route, userData, onLogout }) => {
   const [userInfo, setUserInfo] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Obtener el rol del usuario desde props, AsyncStorage o Firebase
+  // Obtener el rol del usuario siempre verificando en Firebase primero
   useEffect(() => {
     const getUserData = async () => {
       try {
         setIsLoading(true);
         console.log("MantencionPRO: Obteniendo datos del usuario...");
         
-        // Primero, intentar usar los datos pasados como prop
+        // SIEMPRE verificar en Firebase primero para tener los datos más actuales
+        const currentUser = auth.currentUser;
+        
+        if (currentUser) {
+          console.log("Verificando datos en Firebase para:", currentUser.uid);
+          try {
+            const docRef = doc(firestore, `usuarios/${currentUser.uid}`);
+            const docSnap = await getDoc(docRef);
+            
+            if (docSnap.exists()) {
+              const firebaseUserData = docSnap.data();
+              console.log("Datos actuales obtenidos de Firebase:", firebaseUserData);
+              
+              // Asegurarse de que el rol existe
+              if (firebaseUserData.rol) {
+                const completeUserData = {
+                  uid: currentUser.uid,
+                  correo: currentUser.email,
+                  rol: firebaseUserData.rol
+                };
+                
+                // Guardar en el estado y en AsyncStorage
+                setUserRole(firebaseUserData.rol);
+                setUserInfo(completeUserData);
+                
+                // Actualizar AsyncStorage con los datos correctos
+                await AsyncStorage.setItem('userData', JSON.stringify(completeUserData));
+                console.log("Datos actualizados en AsyncStorage desde Firebase:", completeUserData);
+                setIsLoading(false);
+                return;
+              }
+            }
+          } catch (error) {
+            console.error("Error al verificar en Firebase:", error);
+            // Continuamos con los datos alternativos si hay error
+          }
+        }
+        
+        // Si no se pudo obtener de Firebase, intentamos con los props
         if (userData && userData.rol) {
           console.log("Usando datos pasados como prop:", userData);
           setUserRole(userData.rol);
@@ -66,47 +104,13 @@ const MantencionPRO = ({ navigation, route, userData, onLogout }) => {
           }
         }
         
-        // Si no está en AsyncStorage o no tiene rol, intentar obtener directamente de Firebase
-        const currentUser = auth.currentUser;
-        
+        // Si no hay información de usuario en ningún lado pero hay usuario autenticado
         if (currentUser) {
-          console.log("Obteniendo datos de Firebase para:", currentUser.uid);
-          const docRef = doc(firestore, `usuarios/${currentUser.uid}`);
-          const docSnap = await getDoc(docRef);
+          console.error("Error: No se encontró información del usuario");
+          Alert.alert("Error", "No se encontró información de tu usuario");
           
-          if (docSnap.exists()) {
-            const firebaseUserData = docSnap.data();
-            console.log("Datos obtenidos de Firebase:", firebaseUserData);
-            
-            // Asegurarse de que el rol existe
-            if (firebaseUserData.rol) {
-              const completeUserData = {
-                uid: currentUser.uid,
-                correo: currentUser.email,
-                rol: firebaseUserData.rol
-              };
-              
-              // Guardar en el estado y en AsyncStorage
-              setUserRole(firebaseUserData.rol);
-              setUserInfo(completeUserData);
-              
-              // Actualizar AsyncStorage con los datos correctos
-              await AsyncStorage.setItem('userData', JSON.stringify(completeUserData));
-              console.log("Datos actualizados en AsyncStorage:", completeUserData);
-            } else {
-              console.error("Error: Documento de usuario sin rol en Firebase");
-              Alert.alert("Error", "No se pudo determinar tu rol de usuario");
-              
-              // Asignar un rol por defecto
-              setUserRole('user');
-            }
-          } else {
-            console.error("Error: No se encontró el documento del usuario en Firebase");
-            Alert.alert("Error", "No se encontró información de tu usuario");
-            
-            // Asignar un rol por defecto
-            setUserRole('user');
-          }
+          // Eliminado: Ya no se asigna un rol por defecto
+          setIsLoading(false);
         } else {
           console.error("Error: No hay usuario autenticado");
           
@@ -124,15 +128,13 @@ const MantencionPRO = ({ navigation, route, userData, onLogout }) => {
         console.error('Error al obtener datos del usuario:', error);
         Alert.alert("Error", "Hubo un problema al obtener tu información de usuario");
         
-        // Asignar un rol por defecto
-        setUserRole('user');
-      } finally {
+        // Eliminado: Ya no se asigna un rol por defecto
         setIsLoading(false);
       }
     };
 
     getUserData();
-  }, [userData, navigation, onLogout]);
+  }, [navigation, onLogout]);
 
   // Función para cerrar sesión
   const handleLogout = async () => {

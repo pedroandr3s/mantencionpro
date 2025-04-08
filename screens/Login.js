@@ -35,7 +35,7 @@ const firestore = getFirestore(firebaseApp);
 const Login = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [rol, setRol] = useState('user');
+  const [rol, setRol] = useState('');
   const [isRegistrando, setIsRegistrando] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -72,45 +72,28 @@ const Login = ({ navigation }) => {
             };
             
             console.log("Guardando datos en AsyncStorage:", userInfo);
+            
+            // Primero guardamos en AsyncStorage y LUEGO navegamos
             await AsyncStorage.setItem('userData', JSON.stringify(userInfo));
             
-            // Navegar a la pantalla principal
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'MantencionPRO' }],
-            });
+            // Agregamos un pequeño retraso para asegurar que AsyncStorage haya terminado
+            setTimeout(() => {
+              // Navegar a la pantalla principal CON los datos actualizados
+              navigation.reset({
+                index: 0,
+                routes: [{ 
+                  name: 'MantencionPRO',
+                  params: { userData: userInfo } // Pasar los datos como parámetro explícito
+                }],
+              });
+            }, 300);
           } else {
             console.error("Error: El documento del usuario no existe en Firestore");
             
             // Si el usuario está autenticado pero no tiene datos en Firestore,
-            // intentamos crearlos aquí como recuperación
-            try {
-              await setDoc(docRef, {
-                correo: user.email,
-                rol: 'user', // Rol por defecto
-                createdAt: serverTimestamp()
-              });
-              
-              // Guardar información en AsyncStorage
-              const userInfo = {
-                uid: user.uid,
-                correo: user.email,
-                rol: 'user'
-              };
-              await AsyncStorage.setItem('userData', JSON.stringify(userInfo));
-              
-              Alert.alert("Información", "Se ha creado un perfil de usuario por defecto");
-              
-              // Navegar a la pantalla principal
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'MantencionPRO' }],
-              });
-            } catch (err) {
-              console.error("No se pudo crear el perfil de usuario:", err);
-              Alert.alert("Error", "No se pudo crear tu perfil de usuario");
-              setIsLoading(false);
-            }
+            // mostramos un error y no continuamos con la navegación
+            Alert.alert("Error", "No se encontró información de tu usuario");
+            setIsLoading(false);
           }
         } catch (error) {
           console.error('Error al obtener datos del usuario:', error);
@@ -124,8 +107,8 @@ const Login = ({ navigation }) => {
   }, [navigation]);
 
   const registrarUsuario = async () => {
-    if (!email || !password) {
-      setError('Por favor, completa todos los campos');
+    if (!email || !password || !rol) {
+      setError('Por favor, completa todos los campos, incluyendo el rol');
       return;
     }
 
@@ -172,15 +155,24 @@ const Login = ({ navigation }) => {
         await AsyncStorage.setItem('userData', JSON.stringify(userInfo));
         console.log("Datos guardados en AsyncStorage");
         
-        // La navegación se maneja en el useEffect con onAuthStateChanged
-        // Pero podemos mostrar un mensaje de éxito
-        Alert.alert("Éxito", "Usuario registrado correctamente");
+        // Navegar explícitamente a MantencionPRO con los datos correctos
+        setTimeout(() => {
+          navigation.reset({
+            index: 0,
+            routes: [{ 
+              name: 'MantencionPRO',
+              params: { userData: userInfo }
+            }],
+          });
+          setIsLoading(false);
+        }, 300);
       } catch (firestoreError) {
         console.error("Error al guardar en Firestore:", firestoreError);
         Alert.alert(
           "Advertencia", 
           "Se creó la cuenta pero hubo un problema al guardar tu información. Intenta iniciar sesión nuevamente."
         );
+        setIsLoading(false);
       }
     } catch (error) {
       console.error('Error al registrar:', error.message);
@@ -195,7 +187,6 @@ const Login = ({ navigation }) => {
       }
       
       setError(errorMessage);
-    } finally {
       setIsLoading(false);
     }
   };
@@ -212,7 +203,7 @@ const Login = ({ navigation }) => {
     try {
       console.log("Iniciando sesión...");
       await signInWithEmailAndPassword(auth, email, password);
-      // La navegación y obtención del rol se maneja en el useEffect con onAuthStateChanged
+      // El manejo de la sesión y la navegación ahora ocurre en el useEffect
     } catch (error) {
       console.error('Error al iniciar sesión:', error.message);
       
@@ -282,7 +273,7 @@ const Login = ({ navigation }) => {
                   onValueChange={(itemValue) => setRol(itemValue)}
                   style={styles.picker}
                 >
-                  <Picker.Item label="Usuario" value="user" />
+                  <Picker.Item label="Seleccionar rol" value="" />
                   <Picker.Item label="Administrador" value="admin" />
                   <Picker.Item label="Mecánico" value="mecanico" />
                   <Picker.Item label="Conductor" value="conductor" />
