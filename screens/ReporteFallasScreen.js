@@ -8,6 +8,7 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  Modal
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -15,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 // Importar Firebase
 import firebaseApp from "../firebase/credenciales";
-import { getFirestore, collection, addDoc, query, where, getDocs, orderBy, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, query, where, getDocs, doc, updateDoc, orderBy, serverTimestamp } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 
 const firestore = getFirestore(firebaseApp);
@@ -31,6 +32,13 @@ const ReporteFallasScreen = ({ navigation, route }) => {
   const [loadingFallas, setLoadingFallas] = useState(true);
   const [userRole, setUserRole] = useState('');
   const [userInfo, setUserInfo] = useState(null);
+  
+  // Estados para el modal de atención
+  const [modalVisible, setModalVisible] = useState(false);
+  const [fallaSeleccionada, setFallaSeleccionada] = useState(null);
+  const [nuevoEstado, setNuevoEstado] = useState('en_proceso');
+  const [comentario, setComentario] = useState('');
+  const [loadingAtencion, setLoadingAtencion] = useState(false);
 
   // Simulación de equipos disponibles
   const equiposDisponibles = [
@@ -72,47 +80,47 @@ const ReporteFallasScreen = ({ navigation, route }) => {
   }, [route.params]);
 
   // Cargar las fallas reportadas
-  useEffect(() => {
-    const cargarFallas = async () => {
-      try {
-        setLoadingFallas(true);
-        const fallasRef = collection(firestore, 'fallas');
-        let fallasQuery;
-        
-        // Si es conductor, mostrar solo sus fallas
-        if (userRole === 'conductor' && userInfo) {
-          fallasQuery = query(
-            fallasRef, 
-            where('usuarioId', '==', userInfo.uid),
-            orderBy('fechaCreacion', 'desc')
-          );
-        } else {
-          // Si es admin o mecánico, mostrar todas las fallas
-          fallasQuery = query(
-            fallasRef,
-            orderBy('fechaCreacion', 'desc')
-          );
-        }
-        
-        const querySnapshot = await getDocs(fallasQuery);
-        const fallas = [];
-        
-        querySnapshot.forEach((doc) => {
-          fallas.push({
-            id: doc.id,
-            ...doc.data()
-          });
-        });
-        
-        setFallasReportadas(fallas);
-      } catch (error) {
-        console.error('Error al cargar fallas:', error);
-        Alert.alert('Error', 'No se pudieron cargar las fallas reportadas');
-      } finally {
-        setLoadingFallas(false);
+  const cargarFallas = async () => {
+    try {
+      setLoadingFallas(true);
+      const fallasRef = collection(firestore, 'fallas');
+      let fallasQuery;
+      
+      // Si es conductor, mostrar solo sus fallas
+      if (userRole === 'conductor' && userInfo) {
+        fallasQuery = query(
+          fallasRef, 
+          where('usuarioId', '==', userInfo.uid),
+          orderBy('fechaCreacion', 'desc')
+        );
+      } else {
+        // Si es admin o mecánico, mostrar todas las fallas
+        fallasQuery = query(
+          fallasRef,
+          orderBy('fechaCreacion', 'desc')
+        );
       }
-    };
+      
+      const querySnapshot = await getDocs(fallasQuery);
+      const fallas = [];
+      
+      querySnapshot.forEach((doc) => {
+        fallas.push({
+          id: doc.id,
+          ...doc.data()
+        });
+      });
+      
+      setFallasReportadas(fallas);
+    } catch (error) {
+      console.error('Error al cargar fallas:', error);
+      Alert.alert('Error', 'No se pudieron cargar las fallas reportadas');
+    } finally {
+      setLoadingFallas(false);
+    }
+  };
 
+  useEffect(() => {
     if (userRole) {
       cargarFallas();
     }
@@ -150,7 +158,15 @@ const ReporteFallasScreen = ({ navigation, route }) => {
         usuarioId: currentUser.uid,
         usuarioEmail: currentUser.email,
         fechaCreacion: serverTimestamp(),
-        fechaActualizacion: serverTimestamp()
+        fechaActualizacion: serverTimestamp(),
+        historial: [
+          {
+            estado: 'pendiente',
+            fecha: new Date().toISOString(),
+            usuario: currentUser.email,
+            comentario: 'Falla reportada'
+          }
+        ]
       };
 
       await addDoc(collection(firestore, 'fallas'), fallaData);
@@ -164,38 +180,74 @@ const ReporteFallasScreen = ({ navigation, route }) => {
       setPrioridad('media');
       
       // Recargar las fallas
-      const fallasRef = collection(firestore, 'fallas');
-      let fallasQuery;
-      
-      if (userRole === 'conductor') {
-        fallasQuery = query(
-          fallasRef, 
-          where('usuarioId', '==', currentUser.uid),
-          orderBy('fechaCreacion', 'desc')
-        );
-      } else {
-        fallasQuery = query(
-          fallasRef,
-          orderBy('fechaCreacion', 'desc')
-        );
-      }
-      
-      const querySnapshot = await getDocs(fallasQuery);
-      const fallas = [];
-      
-      querySnapshot.forEach((doc) => {
-        fallas.push({
-          id: doc.id,
-          ...doc.data()
-        });
-      });
-      
-      setFallasReportadas(fallas);
+      cargarFallas();
     } catch (error) {
       console.error('Error al reportar falla:', error);
       Alert.alert('Error', 'No se pudo reportar la falla');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Función para abrir el modal de atención
+  const handleAtender = (falla) => {
+    setFallaSeleccionada(falla);
+    setNuevoEstado(falla.estado === 'pendiente' ? 'en_proceso' : 'completado');
+    setComentario('');
+    setModalVisible(true);
+  };
+
+  // Función para procesar la atención de la falla
+  const procesarAtencion = async () => {
+    if (!comentario) {
+      Alert.alert('Error', 'Por favor ingrese un comentario');
+      return;
+    }
+
+    setLoadingAtencion(true);
+
+    try {
+      const currentUser = auth.currentUser;
+      
+      if (!currentUser) {
+        Alert.alert('Error', 'Debe iniciar sesión para atender la falla');
+        setLoadingAtencion(false);
+        return;
+      }
+
+      // Preparar historial
+      const nuevoHistorial = [
+        ...(fallaSeleccionada.historial || []),
+        {
+          estado: nuevoEstado,
+          fecha: new Date().toISOString(),
+          usuario: currentUser.email,
+          comentario: comentario
+        }
+      ];
+
+      // Actualizar documento en la colección "fallas"
+      const fallaRef = doc(firestore, 'fallas', fallaSeleccionada.id);
+      
+      await updateDoc(fallaRef, {
+        estado: nuevoEstado,
+        fechaActualizacion: serverTimestamp(),
+        historial: nuevoHistorial,
+        tecnicoAsignado: currentUser.email
+      });
+
+      Alert.alert('Éxito', `Falla ${nuevoEstado === 'en_proceso' ? 'en proceso' : 'completada'} correctamente`);
+      
+      // Cerrar modal
+      setModalVisible(false);
+      
+      // Recargar las fallas
+      cargarFallas();
+    } catch (error) {
+      console.error('Error al atender falla:', error);
+      Alert.alert('Error', 'No se pudo actualizar el estado de la falla');
+    } finally {
+      setLoadingAtencion(false);
     }
   };
 
@@ -241,6 +293,34 @@ const ReporteFallasScreen = ({ navigation, route }) => {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  // Función para obtener texto del botón según estado
+  const getTextoBoton = (estado) => {
+    switch (estado) {
+      case 'pendiente':
+        return 'Atender';
+      case 'en_proceso':
+        return 'Completar';
+      case 'completado':
+        return 'Ver Detalles';
+      default:
+        return 'Atender';
+    }
+  };
+
+  // Función para obtener icono del botón según estado
+  const getIconoBoton = (estado) => {
+    switch (estado) {
+      case 'pendiente':
+        return 'construct';
+      case 'en_proceso':
+        return 'checkmark-circle';
+      case 'completado':
+        return 'information-circle';
+      default:
+        return 'construct';
+    }
   };
 
   return (
@@ -379,16 +459,146 @@ const ReporteFallasScreen = ({ navigation, route }) => {
                 </Text>
               </View>
               
-              {(userRole === 'admin' || userRole === 'mecanico') && (
-                <TouchableOpacity style={styles.actionButton}>
-                  <Ionicons name="construct" size={16} color="#ffffff" />
-                  <Text style={styles.actionButtonText}>Atender</Text>
+              {falla.tecnicoAsignado && falla.estado !== 'pendiente' && (
+                <Text style={styles.tecnicoText}>
+                  Atendido por: {falla.tecnicoAsignado}
+                </Text>
+              )}
+              
+              {(userRole === 'admin' || userRole === 'mecanico') && falla.estado !== 'cancelado' && (
+                <TouchableOpacity 
+                  style={[
+                    styles.actionButton,
+                    { backgroundColor: getEstadoColor(falla.estado) }
+                  ]}
+                  onPress={() => handleAtender(falla)}
+                >
+                  <Ionicons name={getIconoBoton(falla.estado)} size={16} color="#ffffff" />
+                  <Text style={styles.actionButtonText}>{getTextoBoton(falla.estado)}</Text>
                 </TouchableOpacity>
               )}
             </View>
           ))
         )}
       </View>
+
+      {/* Modal para atender falla */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={modalVisible}
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {nuevoEstado === 'en_proceso' ? 'Atender Falla' : 'Completar Falla'}
+              </Text>
+              <TouchableOpacity onPress={() => setModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#000" />
+              </TouchableOpacity>
+            </View>
+            
+            {fallaSeleccionada && (
+              <View style={styles.modalBody}>
+                <View style={styles.fallaInfo}>
+                  <Text style={styles.fallaInfoTitulo}>{fallaSeleccionada.titulo}</Text>
+                  <Text style={styles.fallaInfoEquipo}>{fallaSeleccionada.equipoNombre}</Text>
+                  <View style={[
+                    styles.estadoBadgeModal, 
+                    { backgroundColor: getEstadoColor(fallaSeleccionada.estado) }
+                  ]}>
+                    <Text style={styles.estadoTextModal}>
+                      Estado actual: {fallaSeleccionada.estado === 'pendiente' ? 'Pendiente' : 
+                                     fallaSeleccionada.estado === 'en_proceso' ? 'En proceso' : 'Completado'}
+                    </Text>
+                  </View>
+                </View>
+                
+                <Text style={styles.modalLabel}>Actualizar estado a:</Text>
+                <View style={styles.pickerContainer}>
+                  <Picker
+                    selectedValue={nuevoEstado}
+                    onValueChange={(itemValue) => setNuevoEstado(itemValue)}
+                    style={styles.picker}
+                    enabled={fallaSeleccionada.estado !== 'completado'}
+                  >
+                    {fallaSeleccionada.estado === 'pendiente' && (
+                      <Picker.Item label="En proceso" value="en_proceso" />
+                    )}
+                    {(fallaSeleccionada.estado === 'pendiente' || fallaSeleccionada.estado === 'en_proceso') && (
+                      <Picker.Item label="Completado" value="completado" />
+                    )}
+                    {fallaSeleccionada.estado === 'en_proceso' && (
+                      <Picker.Item label="Cancelado" value="cancelado" />
+                    )}
+                    {fallaSeleccionada.estado === 'completado' && (
+                      <Picker.Item label="Completado" value="completado" />
+                    )}
+                  </Picker>
+                </View>
+                
+                <Text style={styles.modalLabel}>Comentario:</Text>
+                <TextInput
+                  style={[styles.input, styles.textAreaModal]}
+                  placeholder="Agregue un comentario sobre la atención realizada"
+                  value={comentario}
+                  onChangeText={setComentario}
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                  editable={fallaSeleccionada.estado !== 'completado'}
+                />
+                
+                {fallaSeleccionada.historial && fallaSeleccionada.historial.length > 0 && (
+                  <View style={styles.historialContainer}>
+                    <Text style={styles.historialTitle}>Historial de la falla:</Text>
+                    {fallaSeleccionada.historial.map((item, index) => (
+                      <View key={index} style={styles.historialItem}>
+                        <View style={styles.historialHeader}>
+                          <Text style={styles.historialFecha}>
+                            {new Date(item.fecha).toLocaleString()}
+                          </Text>
+                          <View style={[
+                            styles.historialEstado,
+                            { backgroundColor: getEstadoColor(item.estado) }
+                          ]}>
+                            <Text style={styles.historialEstadoText}>
+                              {item.estado === 'pendiente' ? 'Pendiente' : 
+                               item.estado === 'en_proceso' ? 'En proceso' : 
+                               item.estado === 'completado' ? 'Completado' : 'Cancelado'}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.historialUsuario}>Por: {item.usuario}</Text>
+                        <Text style={styles.historialComentario}>{item.comentario}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                
+                {fallaSeleccionada.estado !== 'completado' && (
+                  <TouchableOpacity
+                    style={[styles.modalButton, { backgroundColor: getEstadoColor(nuevoEstado) }]}
+                    onPress={procesarAtencion}
+                    disabled={loadingAtencion}
+                  >
+                    {loadingAtencion ? (
+                      <ActivityIndicator color="#ffffff" />
+                    ) : (
+                      <Text style={styles.modalButtonText}>
+                        {nuevoEstado === 'en_proceso' ? 'Iniciar atención' : 
+                        nuevoEstado === 'completado' ? 'Marcar como completado' : 'Cancelar falla'}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 };
@@ -403,6 +613,7 @@ const styles = StyleSheet.create({
     padding: 20,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
+    paddingTop: 50, // Ajustar según necesidades
   },
   title: {
     fontSize: 20,
@@ -562,6 +773,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
   },
+  tecnicoText: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
+    marginTop: 5,
+  },
   actionButton: {
     backgroundColor: '#1890FF',
     padding: 8,
@@ -579,6 +796,136 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginLeft: 4,
   },
+  
+  // Estilos para el modal
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    paddingBottom: 20,
+    maxHeight: '90%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    flex: 1,
+  },
+  modalBody: {
+    padding: 16,
+  },
+  fallaInfo: {
+    backgroundColor: '#f9f9f9',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  fallaInfoTitulo: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 5,
+  },
+  fallaInfoEquipo: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 8,
+  },
+  estadoBadgeModal: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
+  },
+  estadoTextModal: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  modalLabel: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    marginTop: 16,
+    color: '#444',
+  },
+  textAreaModal: {
+    height: 100,
+    textAlignVertical: 'top',
+  },
+  modalButton: {
+    backgroundColor: '#1890FF',
+    padding: 15,
+    borderRadius: 5,
+    alignItems: 'center',
+    marginTop: 20,
+    justifyContent: 'center',
+  },
+  modalButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  historialContainer: {
+    marginTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+    paddingTop: 16,
+  },
+  historialTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 12,
+  },
+  historialItem: {
+    backgroundColor: '#f9f9f9',
+    padding: 10,
+    borderRadius: 6,
+    marginBottom: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#1890FF',
+  },
+  historialHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  historialFecha: {
+    fontSize: 12,
+    color: '#666',
+  },
+  historialEstado: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  historialEstadoText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  historialUsuario: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#444',
+    marginBottom: 4,
+  },
+  historialComentario: {
+    fontSize: 13,
+    color: '#444',
+  }
 });
 
 export default ReporteFallasScreen;

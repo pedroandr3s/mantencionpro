@@ -8,12 +8,34 @@ import {
   Modal,
   TextInput,
   ScrollView,
-  Alert
+  Alert,
+  ActivityIndicator
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import { Ionicons } from '@expo/vector-icons';
 
-const MantencionScreen = () => {
+// Firebase imports
+import firebaseApp from "../firebase/credenciales";
+import {
+  getFirestore,
+  collection,
+  doc,
+  addDoc,
+  setDoc,
+  getDoc,
+  getDocs,
+  updateDoc,
+  query,
+  orderBy,
+  serverTimestamp,
+  where
+} from "firebase/firestore";
+import { getAuth } from "firebase/auth";
+
+const firestore = getFirestore(firebaseApp);
+const auth = getAuth(firebaseApp);
+
+const MantencionScreen = ({ navigation, route }) => {
   // Estados para la gestión de mantenimientos
   const [mantenimientos, setMantenimientos] = useState([]);
   const [filtroTipo, setFiltroTipo] = useState('todos');
@@ -22,85 +44,131 @@ const MantencionScreen = () => {
   const [equipos, setEquipos] = useState([]);
   const [repuestos, setRepuestos] = useState([]);
   const [repuestosSeleccionados, setRepuestosSeleccionados] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState(null);
 
   // Estado para el formulario
   const [formData, setFormData] = useState({
-    id: '',
     equipo: '',
     tipo: 'preventivo',
     descripcion: '',
     fecha: new Date().toISOString().split('T')[0],
     estado: 'pendiente',
     kilometraje: '',
-    mecanico: 'Usuario Actual',
+    mecanico: '',
     repuestos: []
   });
 
-  // Cargar datos de ejemplo
+  // Verificar si se está accediendo desde EquiposScreen
   useEffect(() => {
-    // En una app real, estos datos vendrían de una API
-    const mantenimientosEjemplo = [
-      {
-        id: '1',
-        equipo: 'Camión #101',
-        tipo: 'preventivo',
-        descripcion: 'Cambio de aceite y filtros',
-        fecha: '2025-03-25',
-        estado: 'completado',
-        kilometraje: 75000,
-        mecanico: 'Miguel Torres',
-        repuestos: [
-          { id: '1', nombre: 'Filtro de aceite', cantidad: 1 },
-          { id: '2', nombre: 'Aceite 10W-40', cantidad: 8 }
-        ]
-      },
-      {
-        id: '2',
-        equipo: 'Camión #102',
-        tipo: 'correctivo',
-        descripcion: 'Reparación de sistema de frenos',
-        fecha: '2025-03-26',
-        estado: 'en_proceso',
-        kilometraje: 95000,
-        mecanico: 'Laura Mendoza',
-        repuestos: [
-          { id: '3', nombre: 'Pastillas de freno delanteras', cantidad: 1 }
-        ]
-      },
-      {
-        id: '3',
-        equipo: 'Camión #103',
-        tipo: 'preventivo',
-        descripcion: 'Revisión general',
-        fecha: '2025-03-20',
-        estado: 'pendiente',
-        kilometraje: 45000,
-        mecanico: 'Miguel Torres',
-        repuestos: []
+    if (route.params?.equipoId && route.params?.equipoNumero) {
+      const equipoSeleccionado = {
+        id: route.params.equipoId,
+        numero: route.params.equipoNumero,
+        kilometraje: route.params.kilometraje || '0'
+      };
+      
+      setFormData(prev => ({
+        ...prev,
+        equipo: `Camión #${equipoSeleccionado.numero}`,
+        equipoId: equipoSeleccionado.id,
+        kilometraje: equipoSeleccionado.kilometraje.toString()
+      }));
+      
+      // Abrir automáticamente el modal de nuevo mantenimiento
+      setModalVisible(true);
+    }
+  }, [route.params]);
+
+  // Cargar datos desde Firebase
+  useEffect(() => {
+    const cargarDatos = async () => {
+      try {
+        setIsLoading(true);
+        setErrorMsg(null);
+        
+        // Obtener el usuario actual para usar como mecánico por defecto
+        const currentUser = auth.currentUser;
+        let nombreMecanico = 'Usuario sin identificar';
+        
+        if (currentUser) {
+          // Intentar obtener el nombre del usuario desde Firestore
+          try {
+            const docRef = doc(firestore, `usuarios/${currentUser.uid}`);
+            const docSnap = await getDoc(docRef);
+            
+            if (docSnap.exists()) {
+              const userData = docSnap.data();
+              nombreMecanico = userData.nombre || currentUser.email;
+            } else {
+              nombreMecanico = currentUser.email;
+            }
+          } catch (error) {
+            console.error("Error al obtener datos del usuario:", error);
+            nombreMecanico = currentUser.email;
+          }
+        }
+        
+        // Actualizar el formulario con el mecánico actual
+        setFormData(prev => ({
+          ...prev,
+          mecanico: nombreMecanico
+        }));
+        
+        // 1. Cargar mantenimientos
+        const mantenimientosRef = collection(firestore, 'mantenimientos');
+        const q = query(mantenimientosRef, orderBy('fecha', 'desc'));
+        const mantenimientosSnap = await getDocs(q);
+        
+        const mantenimientosData = [];
+        mantenimientosSnap.forEach((docSnap) => {
+          const data = docSnap.data();
+          mantenimientosData.push({
+            id: docSnap.id,
+            ...data,
+            fecha: data.fecha ? data.fecha : new Date().toISOString().split('T')[0]
+          });
+        });
+        
+        setMantenimientos(mantenimientosData);
+        
+        // 2. Cargar equipos
+        const equiposRef = collection(firestore, 'equipos');
+        const equiposSnap = await getDocs(equiposRef);
+        
+        const equiposData = [];
+        equiposSnap.forEach((docSnap) => {
+          equiposData.push({
+            id: docSnap.id,
+            ...docSnap.data()
+          });
+        });
+        
+        setEquipos(equiposData);
+        
+        // 3. Cargar repuestos
+        const repuestosRef = collection(firestore, 'repuestos');
+        const repuestosSnap = await getDocs(repuestosRef);
+        
+        const repuestosData = [];
+        repuestosSnap.forEach((docSnap) => {
+          repuestosData.push({
+            id: docSnap.id,
+            ...docSnap.data()
+          });
+        });
+        
+        setRepuestos(repuestosData);
+        
+        setIsLoading(false);
+      } catch (error) {
+        console.error("Error al cargar datos:", error);
+        setErrorMsg("Error al cargar datos. Intente nuevamente.");
+        setIsLoading(false);
       }
-    ];
-    
-    setMantenimientos(mantenimientosEjemplo);
+    };
 
-    // Datos de ejemplo para equipos
-    const equiposEjemplo = [
-      { id: '1', numero: '101', modelo: 'Volvo FH16', kilometraje: 75000 },
-      { id: '2', numero: '102', modelo: 'Scania R500', kilometraje: 95000 },
-      { id: '3', numero: '103', modelo: 'Mercedes-Benz Actros', kilometraje: 45000 }
-    ];
-    
-    setEquipos(equiposEjemplo);
-
-    // Datos de ejemplo para repuestos
-    const repuestosEjemplo = [
-      { id: '1', nombre: 'Filtro de aceite', stock: 15 },
-      { id: '2', nombre: 'Aceite 10W-40', stock: 8 },
-      { id: '3', nombre: 'Pastillas de freno delanteras', stock: 6 },
-      { id: '4', nombre: 'Correa de distribución', stock: 3 },
-      { id: '5', nombre: 'Batería 12V', stock: 4 }
-    ];
-    
-    setRepuestos(repuestosEjemplo);
+    cargarDatos();
   }, []);
 
   // Filtrar mantenimientos según el tipo seleccionado
@@ -109,52 +177,132 @@ const MantencionScreen = () => {
     : mantenimientos.filter(m => m.tipo === filtroTipo);
 
   // Función para agregar un nuevo mantenimiento
-  const handleAddMantenimiento = () => {
+  const handleAddMantenimiento = async () => {
     // Validar campos
     if (!formData.equipo || !formData.descripcion) {
       Alert.alert('Error', 'Por favor complete los campos obligatorios');
       return;
     }
 
-    // Crear nuevo mantenimiento
-    const nuevoMantenimiento = {
-      ...formData,
-      id: Date.now().toString(),
-      kilometraje: parseInt(formData.kilometraje),
-      repuestos: repuestosSeleccionados
-    };
+    try {
+      setIsLoading(true);
+      
+      // Crear nuevo mantenimiento
+      const nuevoMantenimiento = {
+        ...formData,
+        kilometraje: parseInt(formData.kilometraje) || 0,
+        repuestos: repuestosSeleccionados,
+        equipoId: formData.equipoId, // Asegúrate de que este campo exista
+        fechaCreacion: serverTimestamp(),
+        fechaActualizacion: serverTimestamp()
+      };  
 
-    setMantenimientos([nuevoMantenimiento, ...mantenimientos]);
-    setModalVisible(false);
-    
-    // Reiniciar el formulario
-    setFormData({
-      id: '',
-      equipo: '',
-      tipo: 'preventivo',
-      descripcion: '',
-      fecha: new Date().toISOString().split('T')[0],
-      estado: 'pendiente',
-      kilometraje: '',
-      mecanico: 'Usuario Actual',
-      repuestos: []
-    });
-    
-    setRepuestosSeleccionados([]);
+      // Agregar a Firestore
+      const mantenimientosRef = collection(firestore, 'mantenimientos');
+      const docRef = await addDoc(mantenimientosRef, nuevoMantenimiento);
+
+      // Actualizar estado local
+      setMantenimientos([{
+        id: docRef.id,
+        ...nuevoMantenimiento,
+        fecha: nuevoMantenimiento.fecha
+      }, ...mantenimientos]);
+
+      // Si hay repuestos seleccionados, actualizar su stock
+      if (repuestosSeleccionados.length > 0) {
+        for (const repuesto of repuestosSeleccionados) {
+          const repuestoRef = doc(firestore, 'repuestos', repuesto.id);
+          const repuestoDoc = await getDoc(repuestoRef);
+          
+          if (repuestoDoc.exists()) {
+            const repuestoData = repuestoDoc.data();
+            const nuevoStock = Math.max(0, (repuestoData.stock || 0) - repuesto.cantidad);
+            
+            await updateDoc(repuestoRef, {
+              stock: nuevoStock,
+              fechaActualizacion: serverTimestamp()
+            });
+          }
+        }
+        
+        // Actualizar la lista de repuestos local
+        const repuestosRef = collection(firestore, 'repuestos');
+        const repuestosSnap = await getDocs(repuestosRef);
+        
+        const repuestosData = [];
+        repuestosSnap.forEach((docSnap) => {
+          repuestosData.push({
+            id: docSnap.id,
+            ...docSnap.data()
+          });
+        });
+        
+        setRepuestos(repuestosData);
+      }
+      
+      // Actualizar el kilometraje del equipo si es necesario
+      if (formData.equipoId) {
+        const equipoRef = doc(firestore, 'equipos', formData.equipoId);
+        const equipoDoc = await getDoc(equipoRef);
+        
+        if (equipoDoc.exists()) {
+          await updateDoc(equipoRef, {
+            kilometraje: parseInt(formData.kilometraje) || 0,
+            ultimoMantenimiento: nuevoMantenimiento.fecha,
+            fechaActualizacion: serverTimestamp()
+          });
+        }
+      }
+      
+      setModalVisible(false);
+      
+      // Reiniciar el formulario
+      setFormData({
+        equipo: '',
+        tipo: 'preventivo',
+        descripcion: '',
+        fecha: new Date().toISOString().split('T')[0],
+        estado: 'pendiente',
+        kilometraje: '',
+        mecanico: formData.mecanico, // Mantener el mecánico actual
+        repuestos: []
+      });
+      
+      setRepuestosSeleccionados([]);
+      setIsLoading(false);
+      
+      Alert.alert('Éxito', 'Mantenimiento registrado correctamente');
+    } catch (error) {
+      console.error("Error al registrar mantenimiento:", error);
+      setIsLoading(false);
+      Alert.alert('Error', 'No se pudo registrar el mantenimiento. Intente nuevamente.');
+    }
   };
 
   // Función para agregar repuestos al mantenimiento
-  const handleAddRepuesto = (id, nombre) => {
+  const handleAddRepuesto = (id, nombre, stockActual) => {
     // Verificar si ya está en la lista
     const existente = repuestosSeleccionados.find(r => r.id === id);
     
     if (existente) {
+      // Verificar stock antes de aumentar la cantidad
+      if (existente.cantidad >= stockActual) {
+        Alert.alert('Error', `No hay suficiente stock de ${nombre}. Disponible: ${stockActual}`);
+        return;
+      }
+      
       // Actualizar cantidad
       const actualizados = repuestosSeleccionados.map(r => 
         r.id === id ? { ...r, cantidad: r.cantidad + 1 } : r
       );
       setRepuestosSeleccionados(actualizados);
     } else {
+      // Verificar que haya stock
+      if (stockActual <= 0) {
+        Alert.alert('Error', `No hay stock disponible de ${nombre}`);
+        return;
+      }
+      
       // Agregar nuevo
       setRepuestosSeleccionados([
         ...repuestosSeleccionados,
@@ -170,12 +318,70 @@ const MantencionScreen = () => {
   };
 
   // Función para cambiar el estado de un mantenimiento
-  const handleCambiarEstado = (id, nuevoEstado) => {
-    const mantenimientosActualizados = mantenimientos.map(m => 
-      m.id === id ? { ...m, estado: nuevoEstado } : m
-    );
-    
-    setMantenimientos(mantenimientosActualizados);
+  const handleCambiarEstado = async (id, nuevoEstado) => {
+    try {
+      setIsLoading(true);
+      
+      // Actualizar en Firestore
+      const mantenimientoRef = doc(firestore, 'mantenimientos', id);
+      const mantenimientoDoc = await getDoc(mantenimientoRef);
+      
+      if (!mantenimientoDoc.exists()) {
+        throw new Error("El mantenimiento no existe");
+      }
+      
+      const mantenimientoData = mantenimientoDoc.data();
+      
+      await updateDoc(mantenimientoRef, {
+        estado: nuevoEstado,
+        fechaActualizacion: serverTimestamp(),
+        fechaCompletado: nuevoEstado === 'completado' ? new Date().toISOString().split('T')[0] : null
+      });
+      
+      // Si se completó el mantenimiento, actualizar el equipo
+      if (nuevoEstado === 'completado' && mantenimientoData.equipoId) {
+        const equipoRef = doc(firestore, 'equipos', mantenimientoData.equipoId);
+        await updateDoc(equipoRef, {
+          ultimoMantenimiento: new Date().toISOString().split('T')[0],
+          proximoMantenimiento: calcularProximoMantenimiento(new Date(), mantenimientoData.tipo),
+          estadoMantenimiento: 'bueno',
+          fechaActualizacion: serverTimestamp()
+        });
+      }
+      
+      // Actualizar estado local
+      const mantenimientosActualizados = mantenimientos.map(m => 
+        m.id === id ? { 
+          ...m, 
+          estado: nuevoEstado,
+          fechaCompletado: nuevoEstado === 'completado' ? new Date().toISOString().split('T')[0] : null
+        } : m
+      );
+      
+      setMantenimientos(mantenimientosActualizados);
+      setIsLoading(false);
+      
+      Alert.alert('Éxito', `Estado actualizado a ${nuevoEstado === 'pendiente' ? 'Pendiente' : nuevoEstado === 'en_proceso' ? 'En Proceso' : 'Completado'}`);
+    } catch (error) {
+      console.error("Error al cambiar estado:", error);
+      setIsLoading(false);
+      Alert.alert('Error', 'No se pudo actualizar el estado. Intente nuevamente.');
+    }
+  };
+  
+  // Función para calcular la fecha del próximo mantenimiento
+  const calcularProximoMantenimiento = (fechaActual, tipoMantenimiento) => {
+    const fecha = new Date(fechaActual);
+    // Si es preventivo, programar para 3 meses después
+    // Si es correctivo, programar para 1 mes después (revisión)
+    const mesesAdicionales = tipoMantenimiento === 'preventivo' ? 3 : 1;
+    fecha.setMonth(fecha.getMonth() + mesesAdicionales);
+    return fecha.toISOString().split('T')[0];
+  };
+
+  // Función para ver el historial de mantenimientos de un equipo
+  const verHistorialEquipo = (equipoId) => {
+    navigation.navigate('HistorialMantenimiento', { equipoId });
   };
 
   // Renderizado de un ítem de mantenimiento
@@ -219,7 +425,7 @@ const MantencionScreen = () => {
         <View style={styles.infoRow}>
           <View style={styles.infoItem}>
             <Text style={styles.infoLabel}>Kilometraje:</Text>
-            <Text>{item.kilometraje.toLocaleString()} km</Text>
+            <Text>{item.kilometraje ? item.kilometraje.toLocaleString() : '0'} km</Text>
           </View>
           
           <View style={styles.infoItem}>
@@ -232,7 +438,7 @@ const MantencionScreen = () => {
         <Text style={styles.descripcionText}>{item.descripcion}</Text>
         
         <Text style={styles.infoLabel}>Repuestos utilizados:</Text>
-        {item.repuestos.length > 0 ? (
+        {item.repuestos && item.repuestos.length > 0 ? (
           item.repuestos.map((repuesto, index) => (
             <Text key={index} style={styles.repuestoItem}>
               • {repuesto.nombre} (x{repuesto.cantidad})
@@ -262,13 +468,50 @@ const MantencionScreen = () => {
               <Text style={styles.accionBtnText}>Completar</Text>
             </TouchableOpacity>
           )}
+          
+          {(item.equipoId && (item.estado === 'en_proceso' || item.estado === 'pendiente')) && (
+            <TouchableOpacity 
+              style={[styles.accionBtn, {backgroundColor: '#722ED1'}]}
+              onPress={() => navigation.navigate('InventarioScreen', {
+                seleccionarRepuestos: true,
+                mantenimientoId: item.id
+              })}
+            >
+              <Text style={styles.accionBtnText}>Añadir Repuestos</Text>
+            </TouchableOpacity>
+          )}
         </View>
+      )}
+      
+      {item.equipoId && (
+        <TouchableOpacity 
+          style={styles.verHistorialBtn}
+          onPress={() => verHistorialEquipo(item.equipoId)}
+        >
+          <Text style={styles.verHistorialText}>Ver historial de este equipo</Text>
+          <Ionicons name="chevron-forward" size={16} color="#1890FF" />
+        </TouchableOpacity>
       )}
     </View>
   );
 
+  if (isLoading && mantenimientos.length === 0) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#1890FF" />
+        <Text style={styles.loadingText}>Cargando datos...</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
+      {isLoading && (
+        <View style={styles.overlayLoading}>
+          <ActivityIndicator size="large" color="#1890FF" />
+        </View>
+      )}
+      
       <View style={styles.header}>
         <Text style={styles.title}>Mantenimientos</Text>
         
@@ -320,6 +563,18 @@ const MantencionScreen = () => {
         </View>
       </View>
       
+      {errorMsg && (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{errorMsg}</Text>
+          <TouchableOpacity 
+            style={styles.reloadButton}
+            onPress={() => window.location.reload()}
+          >
+            <Text style={styles.reloadButtonText}>Recargar</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      
       <FlatList
         data={mantenimientosFiltrados}
         renderItem={renderItem}
@@ -335,6 +590,7 @@ const MantencionScreen = () => {
       <TouchableOpacity 
         style={styles.addButton}
         onPress={() => setModalVisible(true)}
+        disabled={isLoading}
       >
         <Ionicons name="add" size={30} color="white" />
       </TouchableOpacity>
@@ -361,13 +617,15 @@ const MantencionScreen = () => {
                 selectedValue={formData.equipo}
                 style={styles.picker}
                 onValueChange={(itemValue) => {
-                  const equipoSeleccionado = equipos.find(e => `Camión #${e.numero}` === itemValue);
+                  const equipoSeleccionado = equipos.find(e => e.id === itemValue || `Camión #${e.numero}` === itemValue);
                   setFormData({
                     ...formData, 
                     equipo: itemValue,
+                    equipoId: equipoSeleccionado ? equipoSeleccionado.id : null,
                     kilometraje: equipoSeleccionado ? equipoSeleccionado.kilometraje.toString() : ''
                   });
                 }}
+                enabled={!route.params?.equipoId} // Desactivar si viene preseleccionado
               >
                 <Picker.Item label="Seleccione un equipo" value="" />
                 {equipos.map(equipo => (
@@ -396,7 +654,6 @@ const MantencionScreen = () => {
                 onChangeText={(text) => setFormData({...formData, kilometraje: text})}
                 placeholder="Kilometraje actual del equipo"
                 keyboardType="numeric"
-                editable={false}
               />
               
               <Text style={styles.inputLabel}>Descripción *</Text>
@@ -434,8 +691,13 @@ const MantencionScreen = () => {
               <TouchableOpacity 
                 style={styles.submitButton}
                 onPress={handleAddMantenimiento}
+                disabled={isLoading}
               >
-                <Text style={styles.submitButtonText}>Registrar Mantenimiento</Text>
+                {isLoading ? (
+                  <ActivityIndicator color="#ffffff" />
+                ) : (
+                  <Text style={styles.submitButtonText}>Registrar Mantenimiento</Text>
+                )}
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -463,17 +725,32 @@ const MantencionScreen = () => {
               renderItem={({ item }) => (
                 <TouchableOpacity 
                   style={styles.repuestoListItem}
-                  onPress={() => handleAddRepuesto(item.id, item.nombre)}
+                  onPress={() => handleAddRepuesto(item.id, item.nombre, item.stock)}
+                  disabled={item.stock <= 0}
                 >
                   <View>
                     <Text style={styles.repuestoListNombre}>{item.nombre}</Text>
-                    <Text style={styles.repuestoListStock}>Stock: {item.stock} unidades</Text>
+                    <Text style={[
+                      styles.repuestoListStock,
+                      item.stock <= 0 && styles.stockAgotado
+                    ]}>
+                      Stock: {item.stock} unidades
+                    </Text>
                   </View>
-                  <Ionicons name="add-circle" size={24} color="#1890FF" />
+                  {item.stock > 0 ? (
+                    <Ionicons name="add-circle" size={24} color="#1890FF" />
+                  ) : (
+                    <Text style={styles.agotadoText}>Agotado</Text>
+                  )}
                 </TouchableOpacity>
               )}
               keyExtractor={item => item.id}
               contentContainerStyle={styles.repuestosList}
+              ListEmptyComponent={
+                <View style={styles.emptyList}>
+                  <Text style={styles.emptyText}>No hay repuestos disponibles</Text>
+                </View>
+              }
             />
             
             <TouchableOpacity 
@@ -488,6 +765,7 @@ const MantencionScreen = () => {
     </View>
   );
 };
+
 
 const styles = StyleSheet.create({
   container: {
@@ -717,6 +995,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#999',
   },
+  stockAgotado: {
+    color: '#FF4D4F',
+  },
+  agotadoText: {
+    color: '#FF4D4F',
+    fontWeight: 'bold',
+    fontSize: 12,
+  },
   submitButton: {
     backgroundColor: '#1890FF',
     padding: 14,
@@ -738,6 +1024,54 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#999',
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#1890FF',
+  },
+  overlayLoading: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    zIndex: 1000,
+  },
+  errorContainer: {
+    backgroundColor: '#fff2f0',
+    padding: 16,
+    margin: 16,
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#FF4D4F',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  errorText: {
+    color: '#FF4D4F',
+    flex: 1,
+  },
+  reloadButton: {
+    backgroundColor: '#FF4D4F',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 4,
+    marginLeft: 12,
+  },
+  reloadButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+  }
 });
 
 export default MantencionScreen;
