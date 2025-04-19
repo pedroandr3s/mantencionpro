@@ -34,6 +34,21 @@ const MantencionPRO = ({ navigation, route, userData, onLogout }) => {
   const [userRole, setUserRole] = useState(null);
   const [userInfo, setUserInfo] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [shouldRedirectToLogin, setShouldRedirectToLogin] = useState(false);
+
+  // Efecto para manejar la redirección al login cuando se requiera
+  useEffect(() => {
+    if (shouldRedirectToLogin) {
+      if (onLogout) {
+        onLogout();
+      } else {
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'Login' }],
+        });
+      }
+    }
+  }, [shouldRedirectToLogin, navigation, onLogout]);
 
   // Obtener el rol del usuario siempre verificando en Firebase primero
   useEffect(() => {
@@ -108,50 +123,32 @@ const MantencionPRO = ({ navigation, route, userData, onLogout }) => {
         if (currentUser) {
           console.error("Error: No se encontró información del usuario");
           Alert.alert("Error", "No se encontró información de tu usuario");
-          
-          // Eliminado: Ya no se asigna un rol por defecto
           setIsLoading(false);
         } else {
           console.error("Error: No hay usuario autenticado");
           
-          // Si no hay usuario, redirigir a login
-          if (onLogout) {
-            onLogout();
-          } else {
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'Login' }],
-            });
-          }
+          // En lugar de navegar directamente, activamos el flag para redirección
+          setShouldRedirectToLogin(true);
         }
       } catch (error) {
         console.error('Error al obtener datos del usuario:', error);
         Alert.alert("Error", "Hubo un problema al obtener tu información de usuario");
-        
-        // Eliminado: Ya no se asigna un rol por defecto
         setIsLoading(false);
       }
     };
 
     getUserData();
-  }, [navigation, onLogout]);
+  }, [userData]);
 
-  // Función para cerrar sesión
+  // Función para cerrar sesión, ahora usa el estado para la navegación
   const handleLogout = async () => {
-    if (onLogout) {
-      onLogout();
-    } else {
-      try {
-        await auth.signOut();
-        await AsyncStorage.removeItem('userData');
-        navigation.reset({
-          index: 0,
-          routes: [{ name: 'Login' }],
-        });
-      } catch (error) {
-        console.error('Error al cerrar sesión:', error);
-        Alert.alert('Error', 'No se pudo cerrar sesión');
-      }
+    try {
+      await auth.signOut();
+      await AsyncStorage.removeItem('userData');
+      setShouldRedirectToLogin(true);
+    } catch (error) {
+      console.error('Error al cerrar sesión:', error);
+      Alert.alert('Error', 'No se pudo cerrar sesión');
     }
   };
 

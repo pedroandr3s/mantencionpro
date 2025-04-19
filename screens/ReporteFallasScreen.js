@@ -79,7 +79,7 @@ const ReporteFallasScreen = ({ navigation, route }) => {
     getUserData();
   }, [route.params]);
 
-  // Cargar las fallas reportadas
+  // Cargar las fallas reportadas - SOLUCIÓN MEJORADA
   const cargarFallas = async () => {
     try {
       setLoadingFallas(true);
@@ -88,30 +88,96 @@ const ReporteFallasScreen = ({ navigation, route }) => {
       
       // Si es conductor, mostrar solo sus fallas
       if (userRole === 'conductor' && userInfo) {
-        fallasQuery = query(
-          fallasRef, 
-          where('usuarioId', '==', userInfo.uid),
-          orderBy('fechaCreacion', 'desc')
-        );
+        try {
+          // Intentar con la consulta indexada (mejor opción a largo plazo)
+          fallasQuery = query(
+            fallasRef, 
+            where('usuarioId', '==', userInfo.uid),
+            orderBy('fechaCreacion', 'desc')
+          );
+          
+          const querySnapshot = await getDocs(fallasQuery);
+          const fallas = [];
+          
+          querySnapshot.forEach((doc) => {
+            fallas.push({
+              id: doc.id,
+              ...doc.data()
+            });
+          });
+          
+          setFallasReportadas(fallas);
+        } catch (indexError) {
+          console.error('Error de índice, usando consulta alternativa:', indexError);
+          
+          // Si falla por error de índice, usar consulta sin ordenamiento
+          fallasQuery = query(
+            fallasRef, 
+            where('usuarioId', '==', userInfo.uid)
+          );
+          
+          const querySnapshot = await getDocs(fallasQuery);
+          const fallas = [];
+          
+          querySnapshot.forEach((doc) => {
+            fallas.push({
+              id: doc.id,
+              ...doc.data()
+            });
+          });
+          
+          // Ordenar manualmente los resultados
+          fallas.sort((a, b) => {
+            // Si no hay fechaCreacion, colocar al final
+            if (!a.fechaCreacion) return 1;
+            if (!b.fechaCreacion) return -1;
+            
+            // Convertir a Date si es necesario
+            const fechaA = a.fechaCreacion.toDate ? a.fechaCreacion.toDate() : new Date(a.fechaCreacion);
+            const fechaB = b.fechaCreacion.toDate ? b.fechaCreacion.toDate() : new Date(b.fechaCreacion);
+            
+            // Ordenar de más reciente a más antiguo
+            return fechaB - fechaA;
+          });
+          
+          setFallasReportadas(fallas);
+          
+          // Mostrar alerta para crear el índice solo la primera vez
+          const indexAlertShown = await AsyncStorage.getItem('indexAlertShown');
+          if (!indexAlertShown) {
+            Alert.alert(
+              'Índice requerido',
+              'Para mejorar el rendimiento, se recomienda crear un índice en Firestore. Por favor, siga el enlace en la consola de desarrollo.',
+              [
+                {
+                  text: 'OK',
+                  onPress: async () => {
+                    await AsyncStorage.setItem('indexAlertShown', 'true');
+                  }
+                }
+              ]
+            );
+          }
+        }
       } else {
         // Si es admin o mecánico, mostrar todas las fallas
         fallasQuery = query(
           fallasRef,
           orderBy('fechaCreacion', 'desc')
         );
-      }
-      
-      const querySnapshot = await getDocs(fallasQuery);
-      const fallas = [];
-      
-      querySnapshot.forEach((doc) => {
-        fallas.push({
-          id: doc.id,
-          ...doc.data()
+        
+        const querySnapshot = await getDocs(fallasQuery);
+        const fallas = [];
+        
+        querySnapshot.forEach((doc) => {
+          fallas.push({
+            id: doc.id,
+            ...doc.data()
+          });
         });
-      });
-      
-      setFallasReportadas(fallas);
+        
+        setFallasReportadas(fallas);
+      }
     } catch (error) {
       console.error('Error al cargar fallas:', error);
       Alert.alert('Error', 'No se pudieron cargar las fallas reportadas');
@@ -925,7 +991,6 @@ const styles = StyleSheet.create({
   historialComentario: {
     fontSize: 13,
     color: '#444',
-  }
-});
+  }});
 
-export default ReporteFallasScreen;
+  export default ReporteFallasScreen;

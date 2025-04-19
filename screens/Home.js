@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,39 +7,414 @@ import {
   ScrollView,
   Image,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Firebase imports
+import firebaseApp from "../firebase/credenciales";
+import {
+  getFirestore,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  serverTimestamp
+} from "firebase/firestore";
+import { getAuth } from "firebase/auth";
+
+const firestore = getFirestore(firebaseApp);
+const auth = getAuth(firebaseApp);
+
+// Función auxiliar para convertir timestamps de Firebase a string
+const formatFirebaseTimestamp = (timestamp) => {
+  if (!timestamp) return '';
+  
+  // Si es un objeto Firebase Timestamp
+  if (timestamp && typeof timestamp === 'object' && timestamp.toDate) {
+    return timestamp.toDate().toISOString().split('T')[0];
+  }
+  
+  // Si ya es string
+  if (typeof timestamp === 'string') {
+    return timestamp;
+  }
+  
+  // Si es date
+  if (timestamp instanceof Date) {
+    return timestamp.toISOString().split('T')[0];
+  }
+  
+  return '';
+};
 
 const Home = ({ navigation, route }) => {
   const [userRole, setUserRole] = useState(route.params?.userRole || null);
   const [userData, setUserData] = useState(route.params?.userData || null);
   const [userName, setUserName] = useState('');
+  const [userId, setUserId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({});
+  
+  // Referencias para limpieza
+  const unsubscribeRef = useRef(null);
+  const isMountedRef = useRef(true);
   
   const onLogout = route.params?.onLogout;
 
+  // Control de montaje del componente
   useEffect(() => {
-    // Set username based on userData or role
-    if (userData && userData.correo) {
-      // Extract username from email (remove @domain.com)
-      const emailName = userData.correo.split('@')[0];
-      setUserName(emailName.charAt(0).toUpperCase() + emailName.slice(1));
-    } else if (userRole) {
-      // Fallback to role-based name if no email
-      if (userRole === 'admin') {
-        setUserName('Administrador');
-      } else if (userRole === 'mecanico') {
-        setUserName('Mecánico');
-      } else if (userRole === 'conductor') {
-        setUserName('Conductor');
-      } else {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+      }
+    };
+  }, []);
+
+  // Obtener información del usuario
+  useEffect(() => {
+    const getUserInfo = async () => {
+      try {
+        // Intentar obtener el rol del usuario desde los parámetros de la ruta
+        if (userData) {
+          if (userData.correo) {
+            // Extract username from email (remove @domain.com)
+            const emailName = userData.correo.split('@')[0];
+            setUserName(emailName.charAt(0).toUpperCase() + emailName.slice(1));
+          } else if (userData.email) {
+            const emailName = userData.email.split('@')[0];
+            setUserName(emailName.charAt(0).toUpperCase() + emailName.slice(1));
+          } else if (userData.nombre) {
+            setUserName(userData.nombre);
+          }
+          
+          setUserRole(userData.rol || userRole);
+          setUserId(userData.uid || userData.id || '');
+        } else if (userRole) {
+          // Fallback to role-based name if no email
+          if (userRole === 'admin') {
+            setUserName('Administrador');
+          } else if (userRole === 'mecanico') {
+            setUserName('Mecánico');
+          } else if (userRole === 'conductor') {
+            setUserName('Conductor');
+          } else {
+            setUserName('Usuario');
+          }
+        } else {
+          // Si no está en los parámetros, intentar obtenerlo de AsyncStorage
+          try {
+            const userDataString = await AsyncStorage.getItem('userData');
+            if (userDataString) {
+              const userDataObj = JSON.parse(userDataString);
+              setUserRole(userDataObj.rol || 'conductor');
+              setUserName(userDataObj.nombre || userDataObj.email || 'Usuario');
+              setUserId(userDataObj.uid || userDataObj.id || '');
+              setUserData(userDataObj);
+            } else {
+              // Intentar obtener del usuario autenticado
+              const currentUser = auth.currentUser;
+              if (currentUser) {
+                // Intentar obtener el perfil completo desde Firestore
+                try {
+                  const userDoc = await getDoc(doc(firestore, 'usuarios', currentUser.uid));
+                  if (userDoc.exists()) {
+                    const userDataObj = userDoc.data();
+                    setUserRole(userDataObj.rol || 'conductor');
+                    setUserName(userDataObj.nombre || userDataObj.email || currentUser.email || 'Usuario');
+                    setUserId(currentUser.uid);
+                    setUserData({...userDataObj, uid: currentUser.uid});
+                  } else {
+                    setUserRole('conductor'); // Rol por defecto
+                    setUserName(currentUser.email || 'Usuario');
+                    setUserId(currentUser.uid);
+                  }
+                } catch (err) {
+                  console.error('Error al obtener datos de usuario de Firestore:', err);
+                  setUserRole('conductor');
+                  setUserName(currentUser.email || 'Usuario');
+                  setUserId(currentUser.uid);
+                }
+              } else {
+                setUserRole('conductor'); // Rol por defecto
+                setUserName('Usuario');
+              }
+            }
+          } catch (parseError) {
+            console.error('Error al analizar datos de usuario de AsyncStorage:', parseError);
+            setUserRole('conductor');
+            setUserName('Usuario');
+          }
+        }
+      } catch (err) {
+        console.error('Error al obtener información del usuario:', err);
+        setUserRole('conductor'); // Rol por defecto en caso de error
         setUserName('Usuario');
       }
-    }
+    };
+
+    getUserInfo();
   }, [userData, userRole]);
+  
+  // Fetch real-time data from Firebase based on role
+  useEffect(() => {
+    // Solo realizar la consulta si tenemos el rol del usuario
+    if (userRole) {
+      fetchDashboardData();
+    }
+  }, [userRole, userId]);
+
+  const fetchDashboardData = async () => {
+    try {
+      setLoading(true);
+      
+      // Datos comunes para todos los roles
+      let statsData = {};
+      
+      // Configurar listeners para actualizaciones en tiempo real
+      
+      // Equipos - listener común para todos los roles
+      const equiposRef = collection(firestore, 'equipos');
+      const equiposQuery = query(equiposRef, orderBy('numero', 'asc'));
+      
+      unsubscribeRef.current = onSnapshot(equiposQuery, 
+        async (equiposSnapshot) => {
+          if (!isMountedRef.current) return;
+          
+          const totalEquipos = equiposSnapshot.size;
+          
+          // Obtener equipos disponibles
+          const equiposDisponibles = equiposSnapshot.docs.filter(
+            doc => doc.data().estadoDisponibilidad === 'disponible'
+          ).length;
+          
+          // Datos específicos según rol
+          if (userRole === 'admin' || userRole === 'mecanico') {
+            try {
+              // Obtener cantidad de mantenciones pendientes
+              const mantencionesRef = collection(firestore, 'mantenciones');
+              const mantencionPendienteQuery = query(mantencionesRef, where('estado', '==', 'pendiente'));
+              const mantencionPendienteSnapshot = await getDocs(mantencionPendienteQuery);
+              const mantencionPendiente = mantencionPendienteSnapshot.size;
+              
+              // Obtener mantenciones programadas para hoy
+              const today = new Date();
+              const formattedDate = `${today.getDate()}/${today.getMonth() + 1}/${today.getFullYear()}`;
+              const mantencionHoyQuery = query(
+                mantencionesRef, 
+                where('fechaProgramada', '==', formattedDate),
+                where('estado', '==', 'pendiente')
+              );
+              const mantencionHoySnapshot = await getDocs(mantencionHoyQuery);
+              const mantencionHoy = mantencionHoySnapshot.size;
+              
+              // Obtener fallas reportadas
+              const fallasRef = collection(firestore, 'fallas');
+              const fallasReportadasQuery = query(fallasRef, where('estado', '==', 'pendiente'));
+              const fallasReportadasSnapshot = await getDocs(fallasReportadasQuery);
+              const fallasReportadas = fallasReportadasSnapshot.size;
+              
+              // Obtener productos con inventario bajo
+              const inventarioRef = collection(firestore, 'inventario');
+              const inventarioBajoQuery = query(inventarioRef, where('cantidad', '<', 10)); // Asumiendo que "bajo" es menos de 10 unidades
+              const inventarioBajoSnapshot = await getDocs(inventarioBajoQuery);
+              const inventarioBajo = inventarioBajoSnapshot.size;
+              
+              statsData = {
+                totalEquipos,
+                mantencionPendiente,
+                mantencionHoy,
+                fallasReportadas,
+                equiposDisponibles,
+                inventarioBajo,
+              };
+            } catch (error) {
+              console.error('Error al cargar datos específicos de administrador/mecánico:', error);
+              statsData = {
+                totalEquipos,
+                mantencionPendiente: 0,
+                mantencionHoy: 0,
+                fallasReportadas: 0,
+                equiposDisponibles,
+                inventarioBajo: 0,
+              };
+            }
+          } else if (userRole === 'conductor') {
+            try {
+              // Obtener fallas reportadas por este conductor
+              const fallasRef = collection(firestore, 'fallas');
+              const fallasReportadasQuery = query(
+                fallasRef, 
+                where('usuarioId', '==', userId || auth.currentUser?.uid || ''),
+                where('estado', '!=', 'completado')
+              );
+              const fallasReportadasSnapshot = await getDocs(fallasReportadasQuery);
+              const fallasReportadas = fallasReportadasSnapshot.size;
+              
+              // Obtener próxima mantención programada para este conductor
+              let proximaMantencion = 'No programada';
+              const mantencionesRef = collection(firestore, 'mantenciones');
+              const mantencionConductorQuery = query(
+                mantencionesRef, 
+                where('conductorId', '==', userId || auth.currentUser?.uid || ''),
+                where('estado', '==', 'pendiente')
+              );
+              const mantencionConductorSnapshot = await getDocs(mantencionConductorQuery);
+              
+              if (!mantencionConductorSnapshot.empty) {
+                // Ordenar mantenciones por fecha para obtener la próxima
+                const mantenciones = [];
+                mantencionConductorSnapshot.forEach(doc => {
+                  mantenciones.push({
+                    id: doc.id,
+                    ...doc.data()
+                  });
+                });
+                
+                mantenciones.sort((a, b) => {
+                  // Intentar varias formas de formato de fecha
+                  let dateA, dateB;
+                  
+                  if (a.fechaProgramada && a.fechaProgramada.includes('/')) {
+                    const [diaA, mesA, anioA] = a.fechaProgramada.split('/');
+                    dateA = new Date(anioA, mesA - 1, diaA);
+                  } else if (a.fechaProgramada && a.fechaProgramada.includes('-')) {
+                    const [anioA, mesA, diaA] = a.fechaProgramada.split('-');
+                    dateA = new Date(anioA, mesA - 1, diaA);
+                  } else if (a.fecha && typeof a.fecha === 'object' && a.fecha.toDate) {
+                    dateA = a.fecha.toDate();
+                  } else {
+                    dateA = new Date(9999, 11, 31); // Fecha lejana para ordenar al final
+                  }
+                  
+                  if (b.fechaProgramada && b.fechaProgramada.includes('/')) {
+                    const [diaB, mesB, anioB] = b.fechaProgramada.split('/');
+                    dateB = new Date(anioB, mesB - 1, diaB);
+                  } else if (b.fechaProgramada && b.fechaProgramada.includes('-')) {
+                    const [anioB, mesB, diaB] = b.fechaProgramada.split('-');
+                    dateB = new Date(anioB, mesB - 1, diaB);
+                  } else if (b.fecha && typeof b.fecha === 'object' && b.fecha.toDate) {
+                    dateB = b.fecha.toDate();
+                  } else {
+                    dateB = new Date(9999, 11, 31); // Fecha lejana para ordenar al final
+                  }
+                  
+                  return dateA - dateB;
+                });
+                
+                if (mantenciones.length > 0 && mantenciones[0].fechaProgramada) {
+                  proximaMantencion = mantenciones[0].fechaProgramada;
+                }
+              }
+              
+              statsData = {
+                equiposDisponibles,
+                fallasReportadas,
+                proximaMantencion,
+              };
+            } catch (error) {
+              console.error('Error al cargar datos específicos de conductor:', error);
+              statsData = {
+                equiposDisponibles,
+                fallasReportadas: 0,
+                proximaMantencion: 'No disponible',
+              };
+            }
+          } else {
+            // Usuario normal solo ve equipos disponibles
+            statsData = {
+              equiposDisponibles,
+            };
+          }
+          
+          if (isMountedRef.current) {
+            setStats(statsData);
+            setLoading(false);
+          }
+        },
+        (error) => {
+          console.error('Error al escuchar cambios en equipos:', error);
+          if (isMountedRef.current) {
+            Alert.alert('Error', 'No se pudieron cargar los datos del panel de control');
+            // Si hay un error, usar datos de respaldo
+            setStats(getBackupStatsForRole());
+            setLoading(false);
+          }
+        }
+      );
+      
+    } catch (error) {
+      console.error('Error al cargar datos del dashboard:', error);
+      if (isMountedRef.current) {
+        Alert.alert('Error', 'No se pudieron cargar los datos del panel de control');
+        // Si hay un error, usar datos de respaldo
+        setStats(getBackupStatsForRole());
+        setLoading(false);
+      }
+    }
+  };
+
+  // Datos de respaldo en caso de fallo de conexión
+  const getBackupStatsForRole = () => {
+    switch (userRole) {
+      case 'admin':
+        return {
+          totalEquipos: 0,
+          mantencionPendiente: 0,
+          mantencionHoy: 0,
+          fallasReportadas: 0,
+          equiposDisponibles: 0,
+          inventarioBajo: 0,
+        };
+      case 'mecanico':
+        return {
+          totalEquipos: 0,
+          mantencionPendiente: 0,
+          mantencionHoy: 0,
+          fallasReportadas: 0,
+          equiposDisponibles: 0,
+          inventarioBajo: 0,
+        };
+      case 'conductor':
+        return {
+          equiposDisponibles: 0,
+          fallasReportadas: 0,
+          proximaMantencion: 'No disponible',
+        };
+      default:
+        return {
+          equiposDisponibles: 0,
+        };
+    }
+  };
+  
+  // Función para forzar recarga de datos
+  const handleRefresh = () => {
+    setLoading(true);
+    
+    // Desuscribirse y volver a suscribirse para forzar recarga
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+    }
+    
+    // Volver a cargar datos
+    fetchDashboardData();
+  };
 
   const handleLogout = async () => {
     try {
+      // Limpiar suscripción a Firebase si existe
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+      }
+      
       // Use the onLogout function from props if available
       if (onLogout) {
         onLogout();
@@ -56,42 +431,6 @@ const Home = ({ navigation, route }) => {
       Alert.alert('Error', 'No se pudo cerrar sesión');
     }
   };
-
-  // Datos simulados para el panel de control según el rol
-  const getStatsForRole = () => {
-    switch (userRole) {
-      case 'admin':
-        return {
-          totalEquipos: 28,
-          mantencionPendiente: 5,
-          mantencionHoy: 3,
-          fallasReportadas: 7,
-          equiposDisponibles: 20,
-          inventarioBajo: 12,
-        };
-      case 'mecanico':
-        return {
-          totalEquipos: 28,
-          mantencionPendiente: 5,
-          mantencionHoy: 3,
-          fallasReportadas: 7,
-          equiposDisponibles: 20,
-          inventarioBajo: 12,
-        };
-      case 'conductor':
-        return {
-          equiposDisponibles: 20,
-          fallasReportadas: 7,
-          proximaMantencion: '15/04/2025',
-        };
-      default:
-        return {
-          equiposDisponibles: 20,
-        };
-    }
-  };
-
-  const stats = getStatsForRole();
 
   // Componente para los datos del panel de administrador y mecánico
   const renderAdminMechanicDashboard = () => (
@@ -156,7 +495,7 @@ const Home = ({ navigation, route }) => {
   );
 
   // Componente para los datos del panel de conductor
-  const renderDriverDashboard = () => (
+  const   renderDriverDashboard = () => (
     <>
       <View style={styles.statsRow}>
         <View style={styles.statCard}>
@@ -232,6 +571,14 @@ const Home = ({ navigation, route }) => {
     </>
   );
 
+  // Componente de carga mientras se obtienen los datos
+  const renderLoading = () => (
+    <View style={styles.loadingContainer}>
+      <ActivityIndicator size="large" color="#1890FF" />
+      <Text style={styles.loadingText}>Cargando datos...</Text>
+    </View>
+  );
+
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
@@ -252,12 +599,29 @@ const Home = ({ navigation, route }) => {
       <View style={styles.dashboardContainer}>
         <Text style={styles.dashboardTitle}>Panel de Control</Text>
         
-        {(userRole === 'admin' || userRole === 'mecanico') ? 
-          renderAdminMechanicDashboard() : 
-          userRole === 'conductor' ? 
-          renderDriverDashboard() : 
-          renderUserDashboard()
-        }
+        {loading ? renderLoading() : (
+          (userRole === 'admin' || userRole === 'mecanico') ? 
+            renderAdminMechanicDashboard() : 
+            userRole === 'conductor' ? 
+            renderDriverDashboard() : 
+            renderUserDashboard()
+        )}
+
+        {/* Botón para refrescar datos */}
+        <TouchableOpacity
+          style={styles.refreshButton}
+          onPress={handleRefresh}
+          disabled={loading}
+        >
+          {loading ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <>
+              <Ionicons name="refresh" size={18} color="#fff" />
+              <Text style={styles.refreshButtonText}>Actualizar datos</Text>
+            </>
+          )}
+        </TouchableOpacity>
       </View>
     </ScrollView>
   );
@@ -276,6 +640,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
+    paddingTop: 50, // Ajustado para tener espacio superior adecuado
   },
   welcomeText: {
     fontSize: 16,
@@ -302,6 +667,17 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 20,
     color: '#333',
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+    minHeight: 200, // Altura mínima para el contenedor de carga
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#666',
   },
   statsRow: {
     flexDirection: 'row',
@@ -406,6 +782,37 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
     marginLeft: 10,
+  },
+  refreshButton: {
+    backgroundColor: '#52c41a',
+    borderRadius: 10,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  refreshButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    marginLeft: 10,
+  },
+  errorContainer: {
+    backgroundColor: '#FFF1F0',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#FFA39E',
+  },
+  errorText: {
+    color: '#F5222D',
+    fontSize: 14,
   },
 });
 

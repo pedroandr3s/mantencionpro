@@ -141,6 +141,40 @@ const App = () => {
       </View>
     );
   }
+  
+  // Componente de navegación con todas las pantallas
+  const Navigation = () => {
+    // Referencia para la navegación
+    const navigationRef = React.useRef(null);
+    
+    // Usar useEffect para navegar basado en el estado de autenticación
+    useEffect(() => {
+      if (navigationRef.current) {
+        if (isLoggedIn) {
+          navigationRef.current.navigate('MantencionPRO');
+        } else {
+          navigationRef.current.navigate('Login');
+        }
+      }
+    }, [isLoggedIn]);
+    
+    return (
+      <NavigationContainer ref={navigationRef}>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Login" component={Login} />
+          <Stack.Screen name="MantencionPRO">
+            {props => (
+              <MantencionPRO 
+                {...props}
+                userData={userData} 
+                onLogout={handleLogout} 
+              />
+            )}
+          </Stack.Screen>
+        </Stack.Navigator>
+      </NavigationContainer>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -148,29 +182,7 @@ const App = () => {
         barStyle="dark-content"
         backgroundColor="#FFFFFF"
       />
-      
-      <NavigationContainer>
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          {isLoggedIn ? (
-            // Si está logueado, mostrar la app principal
-            <Stack.Screen 
-              name="MantencionPRO"
-              // No usar initialParams aquí, para evitar que se pasen datos obsoletos
-            >
-              {props => (
-                <MantencionPRO 
-                  {...props}
-                  userData={userData} 
-                  onLogout={handleLogout} 
-                />
-              )}
-            </Stack.Screen>
-          ) : (
-            // Si no está logueado, mostrar la pantalla de login
-            <Stack.Screen name="Login" component={Login} />
-          )}
-        </Stack.Navigator>
-      </NavigationContainer>
+      <Navigation />
     </SafeAreaView>
   );
 };
