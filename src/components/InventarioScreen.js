@@ -570,7 +570,7 @@ const InventarioScreen = ({ navigation, route }) => {
           onClick={handleAddItem}
           sx={{
             position: 'fixed',
-            bottom: 24,
+            bottom: 80,
             right: 24
           }}
         >

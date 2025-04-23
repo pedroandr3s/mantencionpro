@@ -910,7 +910,7 @@ const MantencionScreen = ({ navigation, route }) => {
         
         .add-button {
           position: fixed;
-          bottom: 24px;
+          bottom: 64px;
           right: 24px;
           width: 56px;
           height: 56px;

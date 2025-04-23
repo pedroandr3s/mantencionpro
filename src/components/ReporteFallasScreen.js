@@ -1,5 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import {
+  faExclamationTriangle,
+  faCheckCircle,
+  faInfoCircle,
+  faCog,
+  faTimes,
+  faTools,
+  faCarCrash,
+  faSpinner,
+  faArrowDown,
+  faArrowRight
+} from '@fortawesome/free-solid-svg-icons';
+import './ReporteFallasScreen.css';
 
 // Firebase imports
 import firebaseApp from "../firebase/credenciales";
@@ -496,20 +510,20 @@ const ReporteFallasScreen = () => {
   };
 
   return (
-    <div className="container mx-auto px-4 py-6">
-      <div className="bg-white shadow-md rounded-lg p-6 mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">
+    <div className="reporte-fallas-container">
+      <div className="reporte-fallas-header">
+        <h1 className="reporte-fallas-title">
           {userRole === 'conductor' ? 'Reportar Falla' : 'Gestión de Fallas Reportadas'}
         </h1>
       </div>
 
       {/* Formulario para reportar falla (solo visible para conductores) */}
       {userRole === 'conductor' && (
-        <div className="bg-white shadow-md rounded-lg p-6 mb-6">
-          <div className="mb-4">
-            <label className="block text-gray-700 font-medium mb-2">Título:</label>
+        <div className="reporte-form-card">
+          <div className="form-group">
+            <label className="form-label">Título:</label>
             <input
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="form-input"
               type="text"
               placeholder="Ej: Falla en frenos"
               value={titulo}
@@ -517,16 +531,16 @@ const ReporteFallasScreen = () => {
             />
           </div>
 
-          <div className="mb-4">
-            <label className="block text-gray-700 font-medium mb-2">Equipo:</label>
-            <div className="relative">
+          <div className="form-group">
+            <label className="form-label">Equipo:</label>
+            <div className="select-container">
               {loadingEquipos ? (
-                <div className="flex justify-center py-3">
-                  <div className="loader"></div>
+                <div className="loading-indicator">
+                  <FontAwesomeIcon icon={faSpinner} spin />
                 </div>
               ) : (
                 <select
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="form-select"
                   value={equipo}
                   onChange={(e) => setEquipo(e.target.value)}
                 >
@@ -538,19 +552,14 @@ const ReporteFallasScreen = () => {
                   ))}
                 </select>
               )}
-              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
-                <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                  <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
-                </svg>
-              </div>
             </div>
           </div>
 
-          <div className="mb-4">
-            <label className="block text-gray-700 font-medium mb-2">Prioridad:</label>
-            <div className="relative">
+          <div className="form-group">
+            <label className="form-label">Prioridad:</label>
+            <div className="select-container">
               <select
-                className="w-full px-3 py-2 border border-gray-300 rounded-md appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="form-select"
                 value={prioridad}
                 onChange={(e) => setPrioridad(e.target.value)}
               >
@@ -558,18 +567,13 @@ const ReporteFallasScreen = () => {
                 <option value="media">Media</option>
                 <option value="baja">Baja</option>
               </select>
-              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
-                <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                  <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
-                </svg>
-              </div>
             </div>
           </div>
 
-          <div className="mb-4">
-            <label className="block text-gray-700 font-medium mb-2">Descripción:</label>
+          <div className="form-group">
+            <label className="form-label">Descripción:</label>
             <textarea
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="form-textarea"
               placeholder="Describa detalladamente la falla observada"
               value={descripcion}
               onChange={(e) => setDescripcion(e.target.value)}
@@ -578,16 +582,14 @@ const ReporteFallasScreen = () => {
           </div>
 
           <button
-            className="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded-md flex items-center justify-center disabled:opacity-50"
+            className="submit-button"
             onClick={reportarFalla}
             disabled={isLoading}
           >
             {isLoading ? (
-              <div className="loader-sm mr-2"></div>
+              <FontAwesomeIcon icon={faSpinner} spin className="icon-left" />
             ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-              </svg>
+              <FontAwesomeIcon icon={faExclamationTriangle} className="icon-left" />
             )}
             Reportar Falla
           </button>
@@ -595,83 +597,80 @@ const ReporteFallasScreen = () => {
       )}
 
       {/* Lista de fallas reportadas */}
-      <div className="mb-6">
-        <h2 className="text-xl font-bold text-gray-800 mb-4">Fallas Reportadas</h2>
+      <div className="fallas-list-section">
+        <h2 className="section-title">Fallas Reportadas</h2>
         
         {loadingFallas ? (
-          <div className="bg-white shadow-md rounded-lg p-8 flex flex-col items-center">
-            <div className="loader mb-4"></div>
-            <p className="text-gray-600">Cargando fallas...</p>
+          <div className="loading-container">
+            <div className="spinner"></div>
+            <p className="loading-text">Cargando fallas...</p>
           </div>
         ) : fallasReportadas.length === 0 ? (
-          <div className="bg-white shadow-md rounded-lg p-8 flex flex-col items-center">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 text-blue-500 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <p className="text-gray-600">No hay fallas reportadas</p>
+          <div className="empty-state">
+            <FontAwesomeIcon icon={faInfoCircle} className="empty-icon" />
+            <p className="empty-text">No hay fallas reportadas</p>
           </div>
         ) : (
-          <div className="grid gap-6 md:grid-cols-1 lg:grid-cols-2">
+          <div className="fallas-grid">
             {fallasReportadas.map((falla) => (
-              <div key={falla.id} className="bg-white shadow-md rounded-lg p-6">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
+              <div key={falla.id} className="falla-card">
+                <div className="falla-header">
+                  <div className="falla-info">
                     {/* Mostrar número de ticket */}
                     {(userRole === 'admin' || userRole === 'mecanico') && (
-                      <div className="inline-block bg-blue-100 text-blue-800 text-xs font-semibold px-2 py-1 rounded-md mb-2">
+                      <div className="ticket-badge">
                         Ticket #{falla.numeroTicket || '?'}
                       </div>
                     )}
-                    <h3 className="text-lg font-semibold text-gray-800">{falla.titulo}</h3>
-                    <p className="text-gray-600">{falla.equipoNombre}</p>
+                    <h3 className="falla-titulo">{falla.titulo}</h3>
+                    <p className="falla-equipo">{falla.equipoNombre}</p>
                     
                     {/* Mostrar quién reportó (solo para admin/mecánico) */}
                     {(userRole === 'admin' || userRole === 'mecanico') && (
-                      <p className="text-sm text-gray-500 italic mt-1">
+                      <p className="falla-reporter">
                         Reportado por: {falla.usuarioNombre || falla.usuarioEmail || 'Usuario desconocido'}
                       </p>
                     )}
                   </div>
                   <div 
-                    className="px-3 py-1 rounded-md text-white text-xs font-bold"
+                    className="prioridad-badge"
                     style={{ backgroundColor: getPrioridadColor(falla.prioridad) }}
                   >
                     {falla.prioridad.charAt(0).toUpperCase() + falla.prioridad.slice(1)}
                   </div>
                 </div>
                 
-                <p className="text-gray-700 mb-4">{falla.descripcion}</p>
+                <p className="falla-descripcion">{falla.descripcion}</p>
                 
-                <div className="flex justify-between items-center">
+                <div className="falla-footer">
                   <div 
-                    className="px-3 py-1 rounded-md text-white text-xs font-bold"
+                    className="estado-badge"
                     style={{ backgroundColor: getEstadoColor(falla.estado) }}
                   >
                     {falla.estado === 'pendiente' ? 'Pendiente' : 
                      falla.estado === 'en_proceso' ? 'En proceso' :
                      falla.estado === 'completado' ? 'Completado' : 'Cancelado'}
                   </div>
-                  <p className="text-xs text-gray-500">
+                  <p className="falla-fecha">
                     {falla.fechaCreacion ? formatearFecha(falla.fechaCreacion) : 'Fecha no disponible'}
                   </p>
                 </div>
                 
                 {falla.tecnicoAsignado && falla.estado !== 'pendiente' && (
-                  <p className="text-sm text-gray-500 italic mt-3">
+                  <p className="falla-tecnico">
                     Atendido por: {falla.tecnicoNombre || falla.tecnicoAsignado}
                   </p>
                 )}
                 
                 {(userRole === 'admin' || userRole === 'mecanico') && falla.estado !== 'cancelado' && (
                   <button 
-                    className="flex items-center mt-4 px-4 py-2 rounded-md text-white text-sm ml-auto"
+                    className="atender-button"
                     style={{ backgroundColor: getEstadoColor(falla.estado) }}
                     onClick={() => handleAtender(falla)}
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      {falla.estado === 'pendiente' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />}
-                      {falla.estado === 'en_proceso' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />}
-                      {falla.estado === 'completado' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />}</svg>
+                    {falla.estado === 'pendiente' && <FontAwesomeIcon icon={faCog} className="icon-left" />}
+                    {falla.estado === 'en_proceso' && <FontAwesomeIcon icon={faCheckCircle} className="icon-left" />}
+                    {falla.estado === 'completado' && <FontAwesomeIcon icon={faInfoCircle} className="icon-left" />}
                     {getTextoBoton(falla.estado)}
                   </button>
                 )}
@@ -683,51 +682,49 @@ const ReporteFallasScreen = () => {
 
       {/* Modal para atender falla */}
       {modalVisible && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg w-full max-w-xl max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center p-4 border-b">
-              <h2 className="text-xl font-bold">
+        <div className="modal-backdrop">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2 className="modal-title">
                 {nuevoEstado === 'en_proceso' ? 'Atender Falla' : 'Completar Falla'}
               </h2>
               <button 
-                className="text-gray-500 hover:text-gray-700" 
+                className="close-button" 
                 onClick={() => setModalVisible(false)}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                <FontAwesomeIcon icon={faTimes} />
               </button>
             </div>
             
             {fallaSeleccionada && (
-              <div className="p-4">
-                <div className="bg-gray-100 p-4 rounded-lg mb-4">
+              <div className="modal-body">
+                <div className="falla-details">
                   {/* Mostrar número de ticket en el modal */}
-                  <div className="inline-block bg-blue-100 text-blue-800 text-sm font-semibold px-2 py-1 rounded-md mb-2">
+                  <div className="ticket-badge modal-ticket">
                     Ticket #{fallaSeleccionada.numeroTicket || '?'}
                   </div>
-                  <h3 className="text-lg font-semibold">{fallaSeleccionada.titulo}</h3>
-                  <p className="text-gray-600">{fallaSeleccionada.equipoNombre}</p>
-                  <p className="text-sm text-gray-600 mt-1">
+                  <h3 className="falla-titulo-modal">{fallaSeleccionada.titulo}</h3>
+                  <p className="falla-equipo-modal">{fallaSeleccionada.equipoNombre}</p>
+                  <p className="falla-reporter-modal">
                     Reportado por: {fallaSeleccionada.usuarioNombre || fallaSeleccionada.usuarioEmail || 'Usuario desconocido'}
                   </p>
-                  <p className="text-sm text-gray-600 mt-1">
+                  <p className="falla-fecha-modal">
                     Fecha de reporte: {fallaSeleccionada.fechaCreacion ? formatearFecha(fallaSeleccionada.fechaCreacion) : 'Fecha no disponible'}
                   </p>
                   <div 
-                    className="inline-block px-3 py-1 rounded-md text-white text-xs font-bold mt-2"
+                    className="estado-badge modal-estado"
                     style={{ backgroundColor: getEstadoColor(fallaSeleccionada.estado) }}
                   >
                     Estado actual: {fallaSeleccionada.estado === 'pendiente' ? 'Pendiente' : 
-                                   fallaSeleccionada.estado === 'en_proceso' ? 'En proceso' : 'Completado'}
+                                  fallaSeleccionada.estado === 'en_proceso' ? 'En proceso' : 'Completado'}
                   </div>
                 </div>
                 
-                <div className="mb-4">
-                  <label className="block text-gray-700 font-medium mb-2">Actualizar estado a:</label>
-                  <div className="relative">
+                <div className="form-group">
+                  <label className="form-label">Actualizar estado a:</label>
+                  <div className="select-container">
                     <select
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="form-select"
                       value={nuevoEstado}
                       onChange={(e) => setNuevoEstado(e.target.value)}
                       disabled={fallaSeleccionada.estado === 'completado'}
@@ -745,18 +742,13 @@ const ReporteFallasScreen = () => {
                         <option value="completado">Completado</option>
                       )}
                     </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
-                      <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                        <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
-                      </svg>
-                    </div>
                   </div>
                 </div>
                 
-                <div className="mb-4">
-                  <label className="block text-gray-700 font-medium mb-2">Comentario:</label>
+                <div className="form-group">
+                  <label className="form-label">Comentario:</label>
                   <textarea
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="form-textarea"
                     placeholder="Agregue un comentario sobre la atención realizada"
                     value={comentario}
                     onChange={(e) => setComentario(e.target.value)}
@@ -766,26 +758,22 @@ const ReporteFallasScreen = () => {
                 </div>
                 
                 {fallaSeleccionada.historial && fallaSeleccionada.historial.length > 0 && (
-                  <div className="mt-6 pt-4 border-t border-gray-200">
-                    <h4 className="font-semibold text-gray-800 mb-3">Historial de la falla:</h4>
-                    <div className="space-y-3">
+                  <div className="historial-section">
+                    <h4 className="historial-title">Historial de la falla:</h4>
+                    <div className="historial-items">
                       {fallaSeleccionada.historial.map((item, index) => (
-                        <div key={index} className="bg-gray-100 p-3 rounded-md border-l-4" style={{ borderColor: getEstadoColor(item.estado) }}>
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="text-sm text-gray-600">
+                        <div 
+                          key={index} 
+                          className="historial-item"
+                          style={{ borderLeftColor: getEstadoColor(item.estado) }}
+                        >
+                          <div className="historial-header">
+                            <span className="historial-fecha">
                               {new Date(item.fecha).toLocaleString()}
                             </span>
-                            <span 
-                              className="px-2 py-1 text-xs rounded-md text-white"
-                              style={{ backgroundColor: getEstadoColor(item.estado) }}
-                            >
-                              {item.estado === 'pendiente' ? 'Pendiente' : 
-                               item.estado === 'en_proceso' ? 'En proceso' : 
-                               item.estado === 'completado' ? 'Completado' : 'Cancelado'}
-                            </span>
                           </div>
-                          <p className="text-sm font-medium text-gray-700">Por: {item.usuario}</p>
-                          <p className="text-sm text-gray-700 mt-1">{item.comentario}</p>
+                          <p className="historial-usuario">Por: {item.usuario}</p>
+                          <p className="historial-comentario">{item.comentario}</p>
                         </div>
                       ))}
                     </div>
@@ -794,30 +782,18 @@ const ReporteFallasScreen = () => {
                 
                 {fallaSeleccionada.estado !== 'completado' && (
                   <button
-                    className="w-full mt-6 py-2 px-4 rounded-md text-white font-medium flex items-center justify-center"
+                    className="proceso-button"
                     style={{ backgroundColor: getEstadoColor(nuevoEstado) }}
                     onClick={procesarAtencion}
                     disabled={loadingAtencion}
                   >
                     {loadingAtencion ? (
-                      <div className="loader-sm mr-2"></div>
+                      <FontAwesomeIcon icon={faSpinner} spin className="icon-left" />
                     ) : (
                       <>
-                        {nuevoEstado === 'en_proceso' && (
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                          </svg>
-                        )}
-                        {nuevoEstado === 'completado' && (
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                        )}
-                        {nuevoEstado === 'cancelado' && (
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        )}
+                        {nuevoEstado === 'en_proceso' && <FontAwesomeIcon icon={faCog} className="icon-left" />}
+                        {nuevoEstado === 'completado' && <FontAwesomeIcon icon={faCheckCircle} className="icon-left" />}
+                        {nuevoEstado === 'cancelado' && <FontAwesomeIcon icon={faTimes} className="icon-left" />}
                         {nuevoEstado === 'en_proceso' ? 'Iniciar atención' : 
                         nuevoEstado === 'completado' ? 'Marcar como completado' : 'Cancelar falla'}
                       </>
@@ -829,40 +805,8 @@ const ReporteFallasScreen = () => {
           </div>
         </div>
       )}
-
-      {/* Estilos CSS para loaders */}
-      <style jsx>{`
-        .loader {
-          border: 4px solid #f3f3f3;
-          border-radius: 50%;
-          border-top: 4px solid #3498db;
-          width: 30px;
-          height: 30px;
-          animation: spin 1s linear infinite;
-        }
-        
-        .loader-sm {
-          border: 3px solid #f3f3f3;
-          border-radius: 50%;
-          border-top: 3px solid #ffffff;
-          width: 20px;
-          height: 20px;
-          animation: spin 1s linear infinite;
-        }
-        
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   );
-};
-
-// Función para reconectar a Firebase
-const reconnectFirebase = () => {
-  console.log("Intentando reconectar con Firebase...");
-  window.location.reload();
 };
 
 export default ReporteFallasScreen;

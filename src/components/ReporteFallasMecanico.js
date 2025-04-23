@@ -19,11 +19,18 @@ import {
   InputLabel,
   Fab,
   Paper,
-  Container
+  Container,
+  Tabs,
+  Tab,
+  Badge
 } from '@mui/material';
 import {
   Add as AddIcon,
-  Close as CloseIcon
+  Close as CloseIcon,
+  Refresh as RefreshIcon,
+  Pending as PendingIcon,
+  CheckCircle as CompletedIcon,
+  Build as ProcessIcon
 } from '@mui/icons-material';
 
 const ReporteFallasScreen = () => {
@@ -44,11 +51,17 @@ const ReporteFallasScreen = () => {
     prioridad: 'media'
   });
 
-  // Estado para filtrado
+  // Estado para filtrado y pestañas
   const [filtroEstado, setFiltroEstado] = useState('todos');
+  const [tabValue, setTabValue] = useState(0);
 
   // Cargar datos de ejemplo
   useEffect(() => {
+    loadReportes();
+  }, []);
+
+  // Función para cargar/recargar reportes
+  const loadReportes = () => {
     const reportesEjemplo = [
       {
         id: '1',
@@ -83,7 +96,7 @@ const ReporteFallasScreen = () => {
     ];
     
     setReportes(reportesEjemplo);
-  }, []);
+  };
 
   // Función para enviar un nuevo reporte
   const handleSubmitReporte = () => {
@@ -120,10 +133,32 @@ const ReporteFallasScreen = () => {
     setReportes(updatedReportes);
   };
 
-  // Filtrar reportes según el estado seleccionado
-  const reportesFiltrados = filtroEstado === 'todos' 
-    ? reportes 
-    : reportes.filter(reporte => reporte.estado === filtroEstado);
+  // Obtener contadores para el dashboard
+  const contadorPendientes = reportes.filter(r => r.estado === 'pendiente').length;
+  const contadorEnProceso = reportes.filter(r => r.estado === 'en_proceso').length;
+  const contadorSolucionados = reportes.filter(r => r.estado === 'solucionado').length;
+
+  // Filtrar reportes según la pestaña seleccionada
+  const getReportesFiltrados = () => {
+    // Primero filtramos por estado si hay un filtro activo
+    const filteredByEstado = filtroEstado === 'todos' 
+      ? reportes 
+      : reportes.filter(reporte => reporte.estado === filtroEstado);
+    
+    // Luego filtramos por la pestaña seleccionada
+    switch(tabValue) {
+      case 0: // Todos
+        return filteredByEstado;
+      case 1: // Pendientes + En proceso
+        return filteredByEstado.filter(r => r.estado === 'pendiente' || r.estado === 'en_proceso');
+      case 2: // Completados
+        return filteredByEstado.filter(r => r.estado === 'solucionado');
+      default:
+        return filteredByEstado;
+    }
+  };
+
+  const reportesFiltrados = getReportesFiltrados();
 
   // Función para obtener un color según la prioridad
   const getPrioridadColor = (prioridad) => {
@@ -157,25 +192,92 @@ const ReporteFallasScreen = () => {
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
-      {/* Encabezado con título y filtro */}
-      <Box sx={{ mb: 4 }}>
-        <Typography variant="h4" component="h1" gutterBottom>
-          {userRole === 'conductor' ? 'Mis Reportes de Fallas' : 'Fallas Reportadas'}
-        </Typography>
+      {/* Header con título y dashboard de estado */}
+      <Box sx={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'flex-start',
+        mb: 4 
+      }}>
+        {/* Título principal */}
+        <Box>
+          <Typography variant="h4" component="h1" gutterBottom>
+            {userRole === 'conductor' ? 'Mis Reportes de Fallas' : 'Fallas Reportadas'}
+          </Typography>
+        </Box>
         
-        {/* Filtro de estado (solo visible para mecánicos) */}
+        {/* Dashboard de estado */}
+        <Paper sx={{ 
+          p: 2, 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: 2,
+          boxShadow: 2
+        }}>
+          <Button 
+            startIcon={<RefreshIcon />}
+            onClick={loadReportes}
+            variant="outlined"
+            size="small"
+          >
+            Actualizar
+          </Button>
+          
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            <Badge badgeContent={contadorPendientes} color="error" max={99}>
+              <Chip 
+                icon={<PendingIcon />} 
+                label="Pendientes" 
+                sx={{ backgroundColor: '#FF4D4F', color: 'white' }}
+              />
+            </Badge>
+            
+            <Badge badgeContent={contadorEnProceso} color="warning" max={99}>
+              <Chip 
+                icon={<ProcessIcon />} 
+                label="En Proceso" 
+                sx={{ backgroundColor: '#FFA940', color: 'white' }}
+              />
+            </Badge>
+            
+            <Badge badgeContent={contadorSolucionados} color="success" max={99}>
+              <Chip 
+                icon={<CompletedIcon />} 
+                label="Solucionados" 
+                sx={{ backgroundColor: '#52C41A', color: 'white' }}
+              />
+            </Badge>
+          </Box>
+        </Paper>
+      </Box>
+      
+      {/* Filtros y pestañas */}
+      <Box sx={{ mb: 4 }}>
+        {/* Pestañas para filtrar por estado */}
+        <Tabs 
+          value={tabValue} 
+          onChange={(e, newValue) => setTabValue(newValue)}
+          sx={{ mb: 2 }}
+        >
+          <Tab label="Todos" />
+          <Tab label="Pendientes" />
+          <Tab label="Completados" />
+        </Tabs>
+        
+        {/* Filtro adicional para mecánicos */}
         {userRole === 'mecanico' && (
-          <FormControl fullWidth sx={{ mt: 2, maxWidth: 300 }}>
+          <FormControl sx={{ mt: 1, mb: 2, minWidth: 200 }}>
             <InputLabel>Filtrar por estado</InputLabel>
             <Select
               value={filtroEstado}
               label="Filtrar por estado"
               onChange={(e) => setFiltroEstado(e.target.value)}
+              size="small"
             >
-              <MenuItem value="todos">Todos</MenuItem>
-              <MenuItem value="pendiente">Pendientes</MenuItem>
-              <MenuItem value="en_proceso">En Proceso</MenuItem>
-              <MenuItem value="solucionado">Solucionados</MenuItem>
+              <MenuItem value="todos">Todos los estados</MenuItem>
+              <MenuItem value="pendiente">Solo pendientes</MenuItem>
+              <MenuItem value="en_proceso">Solo en proceso</MenuItem>
+              <MenuItem value="solucionado">Solo solucionados</MenuItem>
             </Select>
           </FormControl>
         )}
@@ -270,7 +372,7 @@ const ReporteFallasScreen = () => {
           <Grid item xs={12}>
             <Paper sx={{ p: 3, textAlign: 'center' }}>
               <Typography variant="h6" color="textSecondary">
-                No hay reportes disponibles
+                No hay reportes disponibles en esta categoría
               </Typography>
             </Paper>
           </Grid>

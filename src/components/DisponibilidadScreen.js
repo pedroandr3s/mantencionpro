@@ -1,54 +1,33 @@
 import React, { useState, useEffect, useRef } from 'react';
-import {
-  Box,
-  Button,
-  TextField,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Typography,
-  CircularProgress,
-  Grid,
-  Card,
-  CardContent,
-  IconButton,
-  Chip,
-  ToggleButton,
-  ToggleButtonGroup,
-  Alert,
-  Collapse,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Paper
-} from '@mui/material';
-import {
-  Refresh as RefreshIcon,
-  Edit as EditIcon,
-  CheckCircle as CheckCircleIcon,
-  Warning as WarningIcon,
-  Cancel as CancelIcon,
-  DirectionsCar as CarIcon
-} from '@mui/icons-material';
-import { getAuth } from 'firebase/auth';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
-  getFirestore, 
-  collection, 
-  getDocs, 
-  updateDoc, 
+  faCheckCircle, 
+  faExclamationTriangle, 
+  faTimesCircle, 
+  faQuestionCircle, 
+  faPen, 
+  faRotate,
+  faXmark
+} from '@fortawesome/free-solid-svg-icons';
+import './DisponibilidadScreen.css';
+// Firebase imports
+import firebaseApp from "../firebase/credenciales";
+import {
+  getFirestore,
+  collection,
   doc,
+  getDoc,
+  getDocs,
+  updateDoc,
   query,
   orderBy,
   serverTimestamp,
-  onSnapshot,
-  getDoc
-} from 'firebase/firestore';
-import firebaseApp from '../firebase/credenciales';
+  onSnapshot
+} from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
-const auth = getAuth(firebaseApp);
 const firestore = getFirestore(firebaseApp);
+const auth = getAuth(firebaseApp);
 
 // Función auxiliar para convertir timestamps de Firebase a string
 const formatFirebaseTimestamp = (timestamp) => {
@@ -72,7 +51,18 @@ const formatFirebaseTimestamp = (timestamp) => {
   return '';
 };
 
-const DisponibilidadScreen = ({ route, userData }) => {
+const DisponibilidadScreen = ({ route }) => {
+  // Refs para detectar tamaño de ventana
+  const [windowDimensions, setWindowDimensions] = useState({
+    width: window.innerWidth,
+    height: window.innerHeight
+  });
+  
+  // Determinar tamaños de pantalla
+  const isSmallScreen = windowDimensions.width < 576;
+  const isMediumScreen = windowDimensions.width >= 576 && windowDimensions.width < 992;
+  const isLargeScreen = windowDimensions.width >= 992;
+  
   // Estado para los datos del usuario
   const [userRole, setUserRole] = useState(null);
   const [userName, setUserName] = useState('');
@@ -106,6 +96,19 @@ const DisponibilidadScreen = ({ route, userData }) => {
   const unsubscribeRef = useRef(null);
   const isMountedRef = useRef(true);
 
+  // Actualizar dimensiones de la ventana cuando cambia el tamaño
+  useEffect(() => {
+    const handleResize = () => {
+      setWindowDimensions({
+        width: window.innerWidth,
+        height: window.innerHeight
+      });
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   // Control de montaje del componente
   useEffect(() => {
     isMountedRef.current = true;
@@ -121,12 +124,12 @@ const DisponibilidadScreen = ({ route, userData }) => {
   useEffect(() => {
     const getUserInfo = async () => {
       try {
-        // Intentar obtener el rol del usuario desde userData
-        if (userData?.rol) {
-          setUserRole(userData.rol);
-          setUserName(userData.nombre || userData.correo || 'Usuario');
+        // Intentar obtener el rol del usuario desde los parámetros de la ruta
+        if (route?.params?.userData?.rol) {
+          setUserRole(route.params.userData.rol);
+          setUserName(route.params.userData.nombre || route.params.userData.email || 'Usuario');
         } else {
-          // Si no hay userData, intentar obtener del usuario autenticado
+          // Intentar obtener del usuario autenticado
           const currentUser = auth.currentUser;
           if (currentUser) {
             // Intentar obtener el perfil completo desde Firestore
@@ -135,7 +138,7 @@ const DisponibilidadScreen = ({ route, userData }) => {
               if (userDoc.exists()) {
                 const userData = userDoc.data();
                 setUserRole(userData.rol || 'conductor');
-                setUserName(userData.nombre || userData.correo || currentUser.email || 'Usuario');
+                setUserName(userData.nombre || userData.email || currentUser.email || 'Usuario');
               } else {
                 setUserRole('conductor'); // Rol por defecto
                 setUserName(currentUser.email || 'Usuario');
@@ -158,7 +161,7 @@ const DisponibilidadScreen = ({ route, userData }) => {
     };
 
     getUserInfo();
-  }, [userData]);
+  }, [route]);
 
   // Cargar datos desde Firebase
   useEffect(() => {
@@ -186,7 +189,7 @@ const DisponibilidadScreen = ({ route, userData }) => {
                   modelo: data.modelo || '',
                   estadoDisponibilidad: data.estadoDisponibilidad || 'disponible',
                   ultimaActualizacion: formatFirebaseTimestamp(data.fechaActualizacionDisponibilidad) ||
-                                     formatFirebaseTimestamp(data.fechaActualizacion) || '',
+                                       formatFirebaseTimestamp(data.fechaActualizacion) || '',
                   actualizadoPor: data.actualizadoPor || '',
                   motivo: data.motivo || '',
                   limitaciones: data.limitaciones || '',
@@ -244,12 +247,12 @@ const DisponibilidadScreen = ({ route, userData }) => {
   const handleSave = async () => {
     // Validaciones
     if (formData.estadoDisponibilidad === 'no_disponible' && !formData.motivo) {
-      alert('Debe ingresar un motivo cuando el camión no está disponible');
+      alert('Error: Debe ingresar un motivo cuando el camión no está disponible');
       return;
     }
 
     if (formData.estadoDisponibilidad === 'parcial' && (!formData.motivo || !formData.limitaciones)) {
-      alert('Debe ingresar un motivo y las limitaciones cuando el camión está parcialmente disponible');
+      alert('Error: Debe ingresar un motivo y las limitaciones cuando el camión está parcialmente disponible');
       return;
     }
 
@@ -287,11 +290,11 @@ const DisponibilidadScreen = ({ route, userData }) => {
       setLoadingAction(false);
       setModalVisible(false);
       
-      alert('Disponibilidad del camión actualizada correctamente');
+      alert('Éxito: Disponibilidad del camión actualizada correctamente');
     } catch (err) {
       console.error('Error al guardar cambios:', err);
       setLoadingAction(false);
-      alert('No se pudo actualizar la disponibilidad. Intente nuevamente.');
+      alert('Error: No se pudo actualizar la disponibilidad. Intente nuevamente.');
     }
   };
 
@@ -299,13 +302,13 @@ const DisponibilidadScreen = ({ route, userData }) => {
   const getEstadoInfo = (estado) => {
     switch (estado) {
       case 'disponible':
-        return { color: '#52C41A', text: 'Disponible', icon: <CheckCircleIcon /> };
+        return { color: '#52C41A', text: 'Disponible', icon: faCheckCircle };
       case 'parcial':
-        return { color: '#FAAD14', text: 'Parcialmente Disponible', icon: <WarningIcon /> };
+        return { color: '#FAAD14', text: isSmallScreen ? 'Parcial' : 'Parcialmente Disponible', icon: faExclamationTriangle };
       case 'no_disponible':
-        return { color: '#FF4D4F', text: 'No Disponible', icon: <CancelIcon /> };
+        return { color: '#FF4D4F', text: 'No Disponible', icon: faTimesCircle };
       default:
-        return { color: '#999', text: 'Desconocido', icon: <CarIcon /> };
+        return { color: '#999', text: 'Desconocido', icon: faQuestionCircle };
     }
   };
 
@@ -385,332 +388,292 @@ const DisponibilidadScreen = ({ route, userData }) => {
     setLoading(false);
   };
 
+  // Renderizado de un ítem de la lista (Camión)
+  const CamionItem = ({ item }) => {
+    const estadoInfo = getEstadoInfo(item.estadoDisponibilidad);
+    
+    return (
+      <div className="camion-item">
+        <div className="camion-header">
+          <h3 className="camion-numero">Camión #{item.numero}</h3>
+          <div 
+            className="disponibilidad-badge" 
+            style={{ backgroundColor: estadoInfo.color }}
+          >
+            <FontAwesomeIcon icon={estadoInfo.icon} className="estado-icon" />
+            <span className="disponibilidad-text">{estadoInfo.text}</span>
+          </div>
+        </div>
+        
+        <p className="camion-modelo">{item.modelo}</p>
+        
+        {/* Mostrar información adicional si no está totalmente disponible */}
+        {item.estadoDisponibilidad !== 'disponible' && (
+          <div 
+            className="info-no-disponible"
+            style={{ 
+              borderLeftColor: item.estadoDisponibilidad === 'parcial' ? '#FAAD14' : '#FF4D4F' 
+            }}
+          >
+            <p className="motivo-text">
+              <strong>Motivo: </strong>
+              {item.motivo || 'No especificado'}
+            </p>
+            
+            {item.estadoDisponibilidad === 'parcial' && item.limitaciones && (
+              <p className="limitaciones-text">
+                <strong>Limitaciones: </strong>
+                {item.limitaciones}
+              </p>
+            )}
+            
+            {item.estimacionFinalizacion && (
+              <p className="estimacion-text">
+                <strong>Reparación estimada: </strong>
+                {item.estimacionFinalizacion}
+              </p>
+            )}
+          </div>
+        )}
+        
+        <div className={`camion-footer ${isSmallScreen ? 'mobile' : ''}`}>
+          <p className="actualizacion-text">
+            <strong>Actualizado: </strong>
+            {item.ultimaActualizacion ? item.ultimaActualizacion : 'No registrado'} 
+            {item.actualizadoPor ? ` por ${item.actualizadoPor}` : ''}
+          </p>
+          
+          {/* Botón de edición (solo visible para mecánicos y administradores) */}
+          {canEdit && (
+            <button 
+              className="editar-button"
+              onClick={() => handleEdit(item)}
+            >
+              <FontAwesomeIcon icon={faPen} />
+              <span>Editar</span>
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // Si aún está cargando, mostrar indicador
   if (loading && camiones.length === 0) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
-        <CircularProgress />
-        <Typography sx={{ ml: 2 }}>Cargando equipos...</Typography>
-      </Box>
+      <div className="loading-container">
+        <div className="spinner"></div>
+        <p className="loading-text">Cargando equipos...</p>
+      </div>
     );
   }
 
   return (
-    <Box sx={{ p: 3, position: 'relative' }}>
+    <div className="disponibilidad-container">
       {loading && (
-        <Box
-          sx={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(255, 255, 255, 0.7)',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            zIndex: 10,
-          }}
-        >
-          <CircularProgress />
-        </Box>
+        <div className="overlay-loading">
+          <div className="spinner"></div>
+        </div>
       )}
       
-      <Box sx={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        mb: 3 
-      }}>
-        <Typography variant="h4">Disponibilidad de Camiones</Typography>
-        <IconButton onClick={handleRefresh} disabled={loading}>
-          <RefreshIcon />
-        </IconButton>
-      </Box>
-      
-      {/* Filtros */}
-      <Box sx={{ mb: 3 }}>
-        <ToggleButtonGroup
-          value={filtroActual}
-          exclusive
-          onChange={(event, newValue) => {
-            if (newValue !== null) {
-              setFiltroActual(newValue);
-            }
-          }}
-          aria-label="filtro de disponibilidad"
-        >
-          <ToggleButton value="todos">
+      <div className="header">
+        <div className="header-top">
+          <h1 className={`title ${isSmallScreen ? 'small' : ''}`}>
+            Disponibilidad de Camiones
+          </h1>
+          
+          <button 
+            className="refresh-button"
+            onClick={handleRefresh}
+            disabled={loading}
+          >
+            <FontAwesomeIcon icon={faRotate} />
+          </button>
+        </div>
+        
+        {/* Filtros - Adaptados para diferentes tamaños de pantalla */}
+        <div className={`filtros-container ${isSmallScreen ? 'scrollable' : ''}`}>
+          <button 
+            className={`filtro-button ${filtroActual === 'todos' ? 'active' : ''}`}
+            onClick={() => setFiltroActual('todos')}
+          >
             Todos
-          </ToggleButton>
-          <ToggleButton value="disponible" sx={{ '&.Mui-selected': { backgroundColor: '#52C41A', color: 'white' } }}>
+          </button>
+          
+          <button 
+            className={`filtro-button ${filtroActual === 'disponible' ? 'active disponible' : ''}`}
+            onClick={() => setFiltroActual('disponible')}
+          >
             Disponibles
-          </ToggleButton>
-          <ToggleButton value="parcial" sx={{ '&.Mui-selected': { backgroundColor: '#FAAD14', color: 'white' } }}>
-            Parcial
-          </ToggleButton>
-          <ToggleButton value="no_disponible" sx={{ '&.Mui-selected': { backgroundColor: '#FF4D4F', color: 'white' } }}>
+          </button>
+          
+          <button 
+            className={`filtro-button ${filtroActual === 'parcial' ? 'active parcial' : ''}`}
+            onClick={() => setFiltroActual('parcial')}
+          >
+            {isSmallScreen ? 'Parcial' : 'Parcialmente'}
+          </button>
+          
+          <button 
+            className={`filtro-button ${filtroActual === 'no_disponible' ? 'active no-disponible' : ''}`}
+            onClick={() => setFiltroActual('no_disponible')}
+          >
             No Disponibles
-          </ToggleButton>
-        </ToggleButtonGroup>
-      </Box>
+          </button>
+        </div>
+      </div>
       
       {/* Mostrar mensaje de error si existe */}
       {error && (
-        <Collapse in={true}>
-          <Alert 
-            severity="error" 
-            sx={{ mb: 2 }}
-            action={
-              <Button color="inherit" size="small" onClick={handleRefresh}>
-                Reintentar
-              </Button>
-            }
+        <div className="error-container">
+          <p className="error-text">{error}</p>
+          <button 
+            className="reload-button"
+            onClick={handleRefresh}
           >
-            {error}
-          </Alert>
-        </Collapse>
+            Reintentar
+          </button>
+        </div>
       )}
       
       {/* Lista de camiones */}
-      <Grid container spacing={3}>
-        {datosFiltrados.map((camion) => {
-          const estadoInfo = getEstadoInfo(camion.estadoDisponibilidad);
-          
-          return (
-            <Grid item xs={12} md={6} lg={4} key={camion.id}>
-              <Card>
-                <CardContent>
-                  <Box display="flex" justifyContent="space-between" alignItems="flex-start">
-                    <Box>
-                      <Typography variant="h6" gutterBottom>
-                        Camión #{camion.numero}
-                      </Typography>
-                      <Typography variant="body2" color="textSecondary">
-                        {camion.modelo}
-                      </Typography>
-                    </Box>
-                    <Chip
-                      icon={estadoInfo.icon}
-                      label={estadoInfo.text}
-                      sx={{
-                        backgroundColor: estadoInfo.color,
-                        color: 'white',
-                        fontWeight: 'bold'
-                      }}
-                      size="small"
-                    />
-                  </Box>
-                  
-                  {/* Mostrar información adicional si no está totalmente disponible */}
-                  {camion.estadoDisponibilidad !== 'disponible' && (
-                    <Paper 
-                      elevation={0} 
-                      sx={{ 
-                        mt: 2, 
-                        p: 2, 
-                        backgroundColor: '#FFF7E6',
-                        borderLeft: `4px solid ${camion.estadoDisponibilidad === 'parcial' ? '#FAAD14' : '#FF4D4F'}`
-                      }}
-                    >
-                      <Typography variant="body2" gutterBottom>
-                        <strong>Motivo:</strong> {camion.motivo || 'No especificado'}
-                      </Typography>
-                      
-                      {camion.estadoDisponibilidad === 'parcial' && camion.limitaciones && (
-                        <Typography variant="body2" gutterBottom sx={{ color: '#d48806' }}>
-                          <strong>Limitaciones:</strong> {camion.limitaciones}
-                        </Typography>
-                      )}
-                      
-                      {camion.estimacionFinalizacion && (
-                        <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                          <strong>Reparación estimada:</strong> {camion.estimacionFinalizacion}
-                        </Typography>
-                      )}
-                    </Paper>
-                  )}
-                  
-                  <Box mt={2} display="flex" justifyContent="space-between" alignItems="center">
-                    <Typography variant="caption" color="textSecondary">
-                      <strong>Actualizado:</strong> {camion.ultimaActualizacion || 'No registrado'}
-                      {camion.actualizadoPor ? ` por ${camion.actualizadoPor}` : ''}
-                    </Typography>
-                    
-                    {/* Botón de edición (solo visible para mecánicos y administradores) */}
-                    {canEdit && (
-                      <Button
-                        size="small"
-                        startIcon={<EditIcon />}
-                        onClick={() => handleEdit(camion)}
-                      >
-                        Editar
-                      </Button>
-                    )}
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-          );
-        })}
-      </Grid>
+      <div className={`lista-container ${isLargeScreen ? 'grid-view' : ''}`}>
+        {datosFiltrados.length > 0 ? (
+          datosFiltrados.map(item => (
+            <CamionItem key={item.id} item={item} />
+          ))
+        ) : (
+          <div className="empty-list">
+            <p className="empty-text">No hay camiones que coincidan con el filtro</p>
+          </div>
+        )}
+      </div>
       
-      {datosFiltrados.length === 0 && (
-        <Box display="flex" justifyContent="center" alignItems="center" py={5}>
-          <Typography variant="h6" color="textSecondary">
-            No hay camiones que coincidan con el filtro
-          </Typography>
-        </Box>
-      )}
-      
-      {/* Modal para editar disponibilidad (solo para mecánicos y administradores) */}
-      {canEdit && (
-        <Dialog
-          open={modalVisible}
-          onClose={() => setModalVisible(false)}
-          maxWidth="sm"
-          fullWidth
-        >
-          <DialogTitle>
-            Editar Disponibilidad - Camión #{camionSeleccionado?.numero}
-          </DialogTitle>
-          <DialogContent>
-            <Box sx={{ mt: 2 }}>
-              <Typography variant="subtitle1" gutterBottom>
-                Estado del camión
-              </Typography>
+      {/* Modal para editar disponibilidad (optimizado para diferentes pantallas) */}
+      {canEdit && modalVisible && (
+        <div className="modal-backdrop">
+          <div className={`modal-content ${isLargeScreen ? 'large' : ''}`}>
+            <div className="modal-header">
+              <h2 className="modal-title">
+                Editar Disponibilidad - Camión #{camionSeleccionado?.numero}
+              </h2>
+              <button 
+                className="close-button"
+                onClick={() => setModalVisible(false)}
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+            
+            <div className="form-container">
+              <h3 className="section-title">Estado del camión</h3>
               
-              <Grid container spacing={2} sx={{ mb: 3 }}>
-                <Grid item xs={4}>
-                  <Paper
-                    elevation={formData.estadoDisponibilidad === 'disponible' ? 3 : 1}
-                    sx={{
-                      p: 2,
-                      border: '2px solid',
-                      borderColor: formData.estadoDisponibilidad === 'disponible' ? '#52C41A' : '#E8E8E8',
-                      backgroundColor: formData.estadoDisponibilidad === 'disponible' ? '#F6FFED' : 'white',
-                      cursor: 'pointer',
-                      textAlign: 'center'
-                    }}
-                    onClick={() => setFormData({
-                      ...formData, 
-                      estadoDisponibilidad: 'disponible',
-                      motivo: '',
-                      limitaciones: '',
-                      estimacionFinalizacion: ''
-                    })}
-                  >
-                    <Box sx={{ color: '#52C41A', mb: 1 }}>
-                      <CheckCircleIcon />
-                    </Box>
-                    <Typography fontWeight="bold">Disponible</Typography>
-                    <Typography variant="caption" color="textSecondary">
-                      100% operativo
-                    </Typography>
-                  </Paper>
-                </Grid>
+              <div className={`estado-options ${isSmallScreen ? 'vertical' : ''}`}>
+                <div 
+                  className={`estado-option ${formData.estadoDisponibilidad === 'disponible' ? 'selected' : ''}`}
+                  style={{ borderColor: '#52C41A' }}
+                  onClick={() => setFormData({
+                    ...formData, 
+                    estadoDisponibilidad: 'disponible',
+                    motivo: '',
+                    limitaciones: '',
+                    estimacionFinalizacion: ''
+                  })}
+                >
+                  <div className="estado-circle" style={{ backgroundColor: '#52C41A' }}>
+                    <FontAwesomeIcon icon={faCheckCircle} />
+                  </div>
+                  <div className="estado-text-container">
+                    <strong className="estado-text">Disponible</strong>
+                    <span className="estado-desc">100% operativo</span>
+                  </div>
+                </div>
                 
-                <Grid item xs={4}>
-                  <Paper
-                    elevation={formData.estadoDisponibilidad === 'parcial' ? 3 : 1}
-                    sx={{
-                      p: 2,
-                      border: '2px solid',
-                      borderColor: formData.estadoDisponibilidad === 'parcial' ? '#FAAD14' : '#E8E8E8',
-                      backgroundColor: formData.estadoDisponibilidad === 'parcial' ? '#FFF7E6' : 'white',
-                      cursor: 'pointer',
-                      textAlign: 'center'
-                    }}
-                    onClick={() => setFormData({...formData, estadoDisponibilidad: 'parcial'})}
-                  >
-                    <Box sx={{ color: '#FAAD14', mb: 1 }}>
-                      <WarningIcon />
-                    </Box>
-                    <Typography fontWeight="bold">Parcial</Typography>
-                    <Typography variant="caption" color="textSecondary">
-                      Con limitaciones
-                    </Typography>
-                  </Paper>
-                </Grid>
+                <div 
+                  className={`estado-option ${formData.estadoDisponibilidad === 'parcial' ? 'selected' : ''}`}
+                  style={{ borderColor: '#FAAD14' }}
+                  onClick={() => setFormData({...formData, estadoDisponibilidad: 'parcial'})}
+                >
+                  <div className="estado-circle" style={{ backgroundColor: '#FAAD14' }}>
+                    <FontAwesomeIcon icon={faExclamationTriangle} />
+                  </div>
+                  <div className="estado-text-container">
+                    <strong className="estado-text">Parcial</strong>
+                    <span className="estado-desc">Con limitaciones</span>
+                  </div>
+                </div>
                 
-                <Grid item xs={4}>
-                  <Paper
-                    elevation={formData.estadoDisponibilidad === 'no_disponible' ? 3 : 1}
-                    sx={{
-                      p: 2,
-                      border: '2px solid',
-                      borderColor: formData.estadoDisponibilidad === 'no_disponible' ? '#FF4D4F' : '#E8E8E8',
-                      backgroundColor: formData.estadoDisponibilidad === 'no_disponible' ? '#FFF1F0' : 'white',
-                      cursor: 'pointer',
-                      textAlign: 'center'
-                    }}
-                    onClick={() => setFormData({...formData, estadoDisponibilidad: 'no_disponible'})}
-                  >
-                    <Box sx={{ color: '#FF4D4F', mb: 1 }}>
-                      <CancelIcon />
-                    </Box>
-                    <Typography fontWeight="bold">No Disponible</Typography>
-                    <Typography variant="caption" color="textSecondary">
-                      Fuera de servicio
-                    </Typography>
-                  </Paper>
-                </Grid>
-              </Grid>
+                <div 
+                  className={`estado-option ${formData.estadoDisponibilidad === 'no_disponible' ? 'selected' : ''}`}
+                  style={{ borderColor: '#FF4D4F' }}
+                  onClick={() => setFormData({...formData, estadoDisponibilidad: 'no_disponible'})}
+                >
+                  <div className="estado-circle" style={{ backgroundColor: '#FF4D4F' }}>
+                    <FontAwesomeIcon icon={faTimesCircle} />
+                  </div>
+                  <div className="estado-text-container">
+                    <strong className="estado-text">No Disponible</strong>
+                    <span className="estado-desc">Fuera de servicio</span>
+                  </div>
+                </div>
+              </div>
               
               {formData.estadoDisponibilidad !== 'disponible' && (
                 <>
-                  <TextField
-                    fullWidth
-                    label="Motivo"
-                    multiline
-                    rows={2}
-                    value={formData.motivo}
-                    onChange={(e) => setFormData({...formData, motivo: e.target.value})}
-                    placeholder={formData.estadoDisponibilidad === 'parcial' ? 
-                      "Describa el problema" : 
-                      "Ingrese el motivo por el cual no está disponible"}
-                    sx={{ mb: 2 }}
-                  />
+                  <div className="form-group">
+                    <label className="input-label">Motivo</label>
+                    <textarea
+                      className="input textarea"
+                      value={formData.motivo}
+                      onChange={(e) => setFormData({...formData, motivo: e.target.value})}
+                      placeholder={formData.estadoDisponibilidad === 'parcial' ? 
+                        "Describa el problema" : 
+                        "Ingrese el motivo por el cual no está disponible"}
+                      rows={isSmallScreen ? 3 : 2}
+                    />
+                  </div>
                   
                   {formData.estadoDisponibilidad === 'parcial' && (
-                    <TextField
-                      fullWidth
-                      label="Limitaciones"
-                      multiline
-                      rows={2}
-                      value={formData.limitaciones}
-                      onChange={(e) => setFormData({...formData, limitaciones: e.target.value})}
-                      placeholder="Especifique las limitaciones de operación"
-                      sx={{ mb: 2 }}
-                    />
+                    <div className="form-group">
+                      <label className="input-label">Limitaciones</label>
+                      <textarea
+                        className="input textarea"
+                        value={formData.limitaciones}
+                        onChange={(e) => setFormData({...formData, limitaciones: e.target.value})}
+                        placeholder="Especifique las limitaciones de operación"
+                        rows={isSmallScreen ? 3 : 2}
+                      />
+                    </div>
                   )}
                   
-                  <TextField
-                    fullWidth
-                    label="Fecha estimada de reparación"
-                    type="date"
-                    value={formData.estimacionFinalizacion}
-                    onChange={(e) => setFormData({...formData, estimacionFinalizacion: e.target.value})}
-                    InputLabelProps={{ shrink: true }}
-                  />
+                  <div className="form-group">
+                    <label className="input-label">Fecha estimada de reparación</label>
+                    <input
+                      type="date"
+                      className="input"
+                      value={formData.estimacionFinalizacion}
+                      onChange={(e) => setFormData({...formData, estimacionFinalizacion: e.target.value})}
+                    />
+                  </div>
                 </>
               )}
-            </Box>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setModalVisible(false)}>
-              Cancelar
-            </Button>
-            <Button
-              variant="contained"
-              onClick={handleSave}
-              disabled={loadingAction}
-            >
-              {loadingAction ? <CircularProgress size={24} /> : 'Guardar Cambios'}
-            </Button>
-          </DialogActions>
-        </Dialog>
+              
+              <button 
+                className="submit-button"
+                onClick={handleSave}
+                disabled={loadingAction}
+              >
+                {loadingAction ? (
+                  <div className="spinner small"></div>
+                ) : (
+                  "Guardar Cambios"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
-    </Box>
+    </div>
   );
 };
 

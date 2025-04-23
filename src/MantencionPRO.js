@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Tab, Tabs } from '@mui/material';
+import { Tab, Tabs, useMediaQuery, useTheme } from '@mui/material';
 import HomeIcon from '@mui/icons-material/Home';
 import InventoryIcon from '@mui/icons-material/Inventory';
 import BuildIcon from '@mui/icons-material/Build';
@@ -33,6 +33,10 @@ const MantencionPRO = ({ userData, onLogout }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const isMountedRef = useRef(true);
+  
+  // Usar theme y media query para detectar tamaño de pantalla
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   // Control de montaje del componente
   useEffect(() => {
@@ -153,6 +157,11 @@ const MantencionPRO = ({ userData, onLogout }) => {
     setCurrentTab(newValue);
   };
 
+  // Función para navegar a una pestaña específica (se pasará como prop a los componentes hijos)
+  const navigateToTab = (tabIndex) => {
+    setCurrentTab(tabIndex);
+  };
+
   if (isLoading) {
     return (
       <div style={styles.loadingContainer}>
@@ -203,6 +212,7 @@ const MantencionPRO = ({ userData, onLogout }) => {
           userRole={userRole} 
           userData={userInfo} 
           onLogout={onLogout}
+          onNavigateToTab={navigateToTab}
         />
       </div>
       <div style={styles.tabContainer}>
@@ -214,6 +224,8 @@ const MantencionPRO = ({ userData, onLogout }) => {
           sx={{
             '& .MuiTab-root': {
               color: 'gray',
+              minWidth: isMobile ? '40px' : '80px', // Reducir el ancho mínimo en móvil
+              padding: isMobile ? '6px 0' : '12px 16px', // Reducir el padding en móvil
               '&.Mui-selected': {
                 color: '#1890FF',
               },
@@ -227,8 +239,15 @@ const MantencionPRO = ({ userData, onLogout }) => {
             <Tab
               key={index}
               icon={tab.icon}
-              label={tab.label}
-              sx={{ textTransform: 'none' }}
+              label={isMobile ? '' : tab.label} // No mostrar etiqueta en móvil
+              iconPosition="top"
+              sx={{ 
+                textTransform: 'none',
+                '& .MuiSvgIcon-root': {
+                  fontSize: isMobile ? '1.2rem' : '1.5rem', // Iconos más pequeños en móvil
+                }
+              }}
+              aria-label={tab.label} // Mantener accesibilidad
             />
           ))}
         </Tabs>

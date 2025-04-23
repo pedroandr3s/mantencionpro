@@ -78,6 +78,7 @@ const EquiposScreen = ({ navigation }) => {
   const [errorMsg, setErrorMsg] = useState(null);
   const [nuevoKilometraje, setNuevoKilometraje] = useState('');
   const [conductores, setConductores] = useState([]);
+  const [mantenimientos, setMantenimientos] = useState([]);
   const [formEquipo, setFormEquipo] = useState({
     numero: '',
     modelo: '',
@@ -135,11 +136,24 @@ const EquiposScreen = ({ navigation }) => {
 
         await cargarConductores();
         
-        // 2. Suscribirse a cambios en equipos
+        // 2. Suscribirse a cambios en mantenimientos primero (sin anidación)
+        const mantenimientosRef = collection(firestore, 'mantenimientos');
+        unsubscribeMantenimientos = onSnapshot(mantenimientosRef, (mantenimientosSnap) => {
+          if (!isMounted.current) return;
+          
+          const mantenimientosData = mantenimientosSnap.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          
+          setMantenimientos(mantenimientosData);
+        });
+        
+        // 3. Suscribirse a cambios en equipos (sin anidación)
         const equiposRef = collection(firestore, 'equipos');
         const qEquipos = query(equiposRef, orderBy('numero', 'asc'));
         
-        unsubscribeEquipos = onSnapshot(qEquipos, async (equiposSnap) => {
+        unsubscribeEquipos = onSnapshot(qEquipos, (equiposSnap) => {
           if (!isMounted.current) return;
           
           const equiposData = equiposSnap.docs.map(doc => ({
@@ -148,91 +162,73 @@ const EquiposScreen = ({ navigation }) => {
             historial: []
           }));
           
-          // 3. Suscribirse a cambios en mantenimientos
-          const mantenimientosRef = collection(firestore, 'mantenimientos');
-          
-          unsubscribeMantenimientos = onSnapshot(mantenimientosRef, async (mantenimientosSnap) => {
-            if (!isMounted.current) return;
-            
-            const mantenimientosData = mantenimientosSnap.docs.map(doc => ({
-              id: doc.id,
-              ...doc.data()
+          // Procesar los equipos con los mantenimientos ya cargados (sin actualizar Firestore)
+          const equiposConHistorial = equiposData.map(equipo => {
+            // Filtrar mantenimientos para este equipo
+            const historialEquipo = mantenimientos.filter(
+              m => m.equipoId === equipo.id
+            ).map(mantenimiento => ({
+              id: mantenimiento.id,
+              fecha: mantenimiento.fecha || new Date().toISOString().split('T')[0],
+              tipo: mantenimiento.tipo === 'preventivo' ? 'Preventivo' : 'Correctivo',
+              kilometraje: mantenimiento.kilometraje || 0,
+              descripcion: mantenimiento.descripcion || '',
+              repuestos: mantenimiento.repuestos || [],
+              mecanico: mantenimiento.mecanico || 'No asignado',
+              estado: mantenimiento.estado || 'pendiente'
             }));
             
-            // Actualizar los equipos con el historial de mantenimientos
-            const equiposActualizados = await Promise.all(equiposData.map(async (equipo) => {
-              // Filtrar mantenimientos para este equipo
-              const historialEquipo = mantenimientosData.filter(
-                m => m.equipoId === equipo.id
-              ).map(mantenimiento => ({
-                id: mantenimiento.id,
-                fecha: mantenimiento.fecha || new Date().toISOString().split('T')[0],
-                tipo: mantenimiento.tipo === 'preventivo' ? 'Preventivo' : 'Correctivo',
-                kilometraje: mantenimiento.kilometraje || 0,
-                descripcion: mantenimiento.descripcion || '',
-                repuestos: mantenimiento.repuestos || [],
-                mecanico: mantenimiento.mecanico || 'No asignado',
-                estado: mantenimiento.estado || 'pendiente'
-              }));
-              
-              // Ordenar por fecha más reciente primero
-              historialEquipo.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
-              
-              // Verificar si hay mantenimientos en proceso para actualizar el estado del equipo
-              const mantenimientoEnProceso = historialEquipo.find(m => m.estado === 'en_proceso');
-              let estadoEquipo = equipo.estado;
-              
-              if (mantenimientoEnProceso && equipo.estado === 'Operativo') {
-                // Si hay un mantenimiento en proceso, actualizar el estado en Firestore
-                const equipoRef = doc(firestore, 'equipos', equipo.id);
-                await updateDoc(equipoRef, {
-                  estado: 'En Mantenimiento',
-                  fechaActualizacion: serverTimestamp()
-                });
-                estadoEquipo = 'En Mantenimiento';
-              } else if (!mantenimientoEnProceso && equipo.estado === 'En Mantenimiento') {
-                // Verificar si todos los mantenimientos están completados
-                const todoCompletado = !historialEquipo.some(m => m.estado === 'en_proceso' || m.estado === 'pendiente');
-                
-                if (todoCompletado) {
-                  // Actualizar el estado a Operativo
-                  const equipoRef = doc(firestore, 'equipos', equipo.id);
-                  await updateDoc(equipoRef, {
-                    estado: 'Operativo',
-                    fechaActualizacion: serverTimestamp()
-                  });
-                  estadoEquipo = 'Operativo';
-                }
-              }
-              
-              // Calcular último y próximo mantenimiento
-              const mantenimientosCompletados = historialEquipo.filter(m => m.estado === 'completado');
-              let ultimoMantenimiento = equipo.ultimoMantenimiento;
-              let proximoMantenimiento = equipo.proximoMantenimiento;
-              
-              if (mantenimientosCompletados.length > 0) {
-                ultimoMantenimiento = mantenimientosCompletados[0].fecha;
-                
-                // Calcular próximo mantenimiento (2 meses después del último)
-                const fechaUltimo = new Date(mantenimientosCompletados[0].fecha);
-                fechaUltimo.setMonth(fechaUltimo.getMonth() + 2);
-                proximoMantenimiento = fechaUltimo.toISOString().split('T')[0];
-              }
-              
-              return {
-                ...equipo,
-                historial: historialEquipo,
-                ultimoMantenimiento,
-                proximoMantenimiento,
-                estado: estadoEquipo
-              };
-            }));
+            // Ordenar por fecha más reciente primero
+            historialEquipo.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
             
-            if (isMounted.current) {
-              setEquipos(equiposActualizados);
-              setIsLoading(false);
+            // No actualizar Firestore aquí, solo calcular el estado según el historial
+            const mantenimientoEnProceso = historialEquipo.find(m => m.estado === 'en_proceso');
+            let estadoEquipo = equipo.estado;
+            
+            if (mantenimientoEnProceso && equipo.estado === 'Operativo') {
+              estadoEquipo = 'En Mantenimiento';
+            } else if (!mantenimientoEnProceso && equipo.estado === 'En Mantenimiento') {
+              // Verificar si todos los mantenimientos están completados
+              const todoCompletado = !historialEquipo.some(m => m.estado === 'en_proceso' || m.estado === 'pendiente');
+              
+              if (todoCompletado) {
+                estadoEquipo = 'Operativo';
+              }
             }
+            
+            // Calcular último y próximo mantenimiento
+            const mantenimientosCompletados = historialEquipo.filter(m => m.estado === 'completado');
+            let ultimoMantenimiento = equipo.ultimoMantenimiento;
+            let proximoMantenimiento = equipo.proximoMantenimiento;
+            
+            if (mantenimientosCompletados.length > 0) {
+              ultimoMantenimiento = mantenimientosCompletados[0].fecha;
+              
+              // Calcular próximo mantenimiento (2 meses después del último)
+              const fechaUltimo = new Date(mantenimientosCompletados[0].fecha);
+              fechaUltimo.setMonth(fechaUltimo.getMonth() + 2);
+              proximoMantenimiento = fechaUltimo.toISOString().split('T')[0];
+            }
+            
+            return {
+              ...equipo,
+              historial: historialEquipo,
+              ultimoMantenimiento,
+              proximoMantenimiento,
+              estado: estadoEquipo
+            };
           });
+          
+          if (isMounted.current) {
+            setEquipos(equiposConHistorial);
+            setIsLoading(false);
+          }
+        }, (error) => {
+          console.error("Error al escuchar cambios en equipos:", error);
+          if (isMounted.current) {
+            setErrorMsg("Error al cargar los equipos. Intente nuevamente.");
+            setIsLoading(false);
+          }
         });
         
       } catch (error) {
@@ -253,6 +249,50 @@ const EquiposScreen = ({ navigation }) => {
       if (unsubscribeMantenimientos) unsubscribeMantenimientos();
     };
   }, []);
+
+  // Efecto separado para actualizar el estado de los equipos en Firestore
+  // basado en sus mantenimientos (esto evita el ciclo infinito)
+  useEffect(() => {
+    const actualizarEstadosEquipos = async () => {
+      // Solo si ya tenemos datos cargados
+      if (equipos.length === 0 || mantenimientos.length === 0) return;
+      
+      for (const equipo of equipos) {
+        const mantenimientosEquipo = mantenimientos.filter(m => m.equipoId === equipo.id);
+        const mantenimientoEnProceso = mantenimientosEquipo.find(m => m.estado === 'en_proceso');
+        const todoCompletado = !mantenimientosEquipo.some(m => m.estado === 'en_proceso' || m.estado === 'pendiente');
+        
+        // Solo actualizar en Firestore si realmente hay que cambiar el estado
+        let debeActualizar = false;
+        let nuevoEstado = equipo.estado;
+        
+        if (mantenimientoEnProceso && equipo.estado === 'Operativo') {
+          nuevoEstado = 'En Mantenimiento';
+          debeActualizar = true;
+        } else if (!mantenimientoEnProceso && equipo.estado === 'En Mantenimiento' && todoCompletado) {
+          nuevoEstado = 'Operativo';
+          debeActualizar = true;
+        }
+        
+        if (debeActualizar) {
+          try {
+            const equipoRef = doc(firestore, 'equipos', equipo.id);
+            await updateDoc(equipoRef, {
+              estado: nuevoEstado,
+              fechaActualizacion: serverTimestamp()
+            });
+          } catch (error) {
+            console.error(`Error al actualizar estado de equipo ${equipo.id}:`, error);
+          }
+        }
+      }
+    };
+    
+    // Solo ejecutar esta sincronización una vez después de cargar los datos
+    if (!isLoading && equipos.length > 0) {
+      actualizarEstadosEquipos();
+    }
+  }, [isLoading, equipos.length]); // Se ejecuta solo cuando cambia isLoading o la longitud de equipos
 
   // Filtrar equipos según término de búsqueda
   const equiposFiltrados = equipos.filter(equipo => {
@@ -719,7 +759,7 @@ const EquiposScreen = ({ navigation }) => {
                     setModalVisible(true);
                   }}
                 >
-                  Actualizar KM
+                  KM
                 </Button>
                 <Button 
                   size="small"
@@ -729,7 +769,7 @@ const EquiposScreen = ({ navigation }) => {
                     setHistorialVisible(true);
                   }}
                 >
-                  Ver Historial
+                  Historial
                 </Button>
                 <Button 
                   size="small"
@@ -812,102 +852,6 @@ const EquiposScreen = ({ navigation }) => {
           >
             {isLoading ? <CircularProgress size={24} /> : 'Actualizar'}
           </Button>
-        </DialogActions>
-      </Dialog>
-      
-      {/* Modal para ver historial */}
-      <Dialog
-        open={historialVisible}
-        onClose={() => setHistorialVisible(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>
-          Historial - Camión #{equipoSeleccionado?.numero}
-        </DialogTitle>
-        <DialogContent>
-          {equipoSeleccionado?.historial && equipoSeleccionado.historial.length > 0 ? (
-            <TableContainer component={Paper} sx={{ mt: 2 }}>
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Mecánico</TableCell>
-                    <TableCell>Repuestos</TableCell>
-                    <TableCell>Acciones</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {equipoSeleccionado.historial.map((item) => (
-                    <TableRow key={item.id}>
-                      <TableCell>{item.fecha}</TableCell>
-                      <TableCell>
-                        <Chip 
-                          label={item.tipo}
-                          color={item.tipo === 'Preventivo' ? 'success' : 'warning'}
-                          size="small"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Chip 
-                          label={
-                            item.estado === 'pendiente' ? 'Pendiente' :
-                            item.estado === 'en_proceso' ? 'En Proceso' : 'Completado'
-                          }
-                          color={
-                            item.estado === 'pendiente' ? 'warning' :
-                            item.estado === 'en_proceso' ? 'info' : 'success'
-                          }
-                          size="small"
-                        />
-                      </TableCell>
-                      <TableCell>{item.kilometraje?.toLocaleString() || 0} km</TableCell>
-                      <TableCell>{item.descripcion}</TableCell>
-                      <TableCell>{item.mecanico}</TableCell>
-                      <TableCell>
-                        {item.repuestos && item.repuestos.length > 0 ? (
-                          <ul style={{ margin: 0, paddingLeft: '20px' }}>
-                            {item.repuestos.map((repuesto, index) => (
-                              <li key={index}>
-                                {typeof repuesto === 'string' ? repuesto : repuesto.nombre}
-                                {repuesto.cantidad ? ` (x${repuesto.cantidad})` : ''}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          'Sin repuestos'
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {item.estado !== 'completado' && (
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            onClick={() => {
-                              setHistorialVisible(false);
-                              navigation?.navigate?.('MantencionScreen', { 
-                                mantenimientoId: item.id
-                              });
-                            }}
-                          >
-                            Ir a mantenimiento
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          ) : (
-            <Box display="flex" justifyContent="center" alignItems="center" p={4}>
-              <Typography color="textSecondary">
-                No hay registros de mantenimiento
-              </Typography>
-            </Box>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setHistorialVisible(false)}>Cerrar</Button>
         </DialogActions>
       </Dialog>
       
@@ -1059,7 +1003,106 @@ const EquiposScreen = ({ navigation }) => {
           </Button>
         </DialogActions>
       </Dialog>
-      
+       {/* Modal para ver historial */}
+       <Dialog
+        open={historialVisible}
+        onClose={() => setHistorialVisible(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          Historial - Camión #{equipoSeleccionado?.numero}
+        </DialogTitle>
+        <DialogContent>
+          {equipoSeleccionado?.historial && equipoSeleccionado.historial.length > 0 ? (
+            <TableContainer component={Paper} sx={{ mt: 2 }}>
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Fecha</TableCell>
+                    <TableCell>Tipo</TableCell>
+                    <TableCell>Estado</TableCell>
+                    <TableCell>Kilometraje</TableCell>
+                    <TableCell>Descripción</TableCell>
+                    <TableCell>Mecánico</TableCell>
+                    <TableCell>Repuestos</TableCell>
+                    <TableCell>Acciones</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {equipoSeleccionado.historial.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell>{item.fecha}</TableCell>
+                      <TableCell>
+                        <Chip 
+                          label={item.tipo}
+                          color={item.tipo === 'Preventivo' ? 'success' : 'warning'}
+                          size="small"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Chip 
+                          label={
+                            item.estado === 'pendiente' ? 'Pendiente' :
+                            item.estado === 'en_proceso' ? 'En Proceso' : 'Completado'
+                          }
+                          color={
+                            item.estado === 'pendiente' ? 'warning' :
+                            item.estado === 'en_proceso' ? 'info' : 'success'
+                          }
+                          size="small"
+                        />
+                      </TableCell>
+                      <TableCell>{item.kilometraje?.toLocaleString() || 0} km</TableCell>
+                      <TableCell>{item.descripcion}</TableCell>
+                      <TableCell>{item.mecanico}</TableCell>
+                      <TableCell>
+                        {item.repuestos && item.repuestos.length > 0 ? (
+                          <ul style={{ margin: 0, paddingLeft: '20px' }}>
+                            {item.repuestos.map((repuesto, index) => (
+                              <li key={index}>
+                                {typeof repuesto === 'string' ? repuesto : repuesto.nombre}
+                                {repuesto.cantidad ? ` (x${repuesto.cantidad})` : ''}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          'Sin repuestos'
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {item.estado !== 'completado' && (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => {
+                              setHistorialVisible(false);
+                              navigation?.navigate?.('MantencionScreen', { 
+                                mantenimientoId: item.id
+                              });
+                            }}
+                          >
+                            Ir a mantenimiento
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          ) : (
+            <Box display="flex" justifyContent="center" alignItems="center" p={4}>
+              <Typography color="textSecondary">
+                No hay registros de mantenimiento
+              </Typography>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setHistorialVisible(false)}>Cerrar</Button>
+        </DialogActions>
+      </Dialog>
       {/* Modal para confirmar eliminación */}
       <Dialog
         open={eliminarModalVisible}
@@ -1099,3 +1142,5 @@ const EquiposScreen = ({ navigation }) => {
 };
 
 export default EquiposScreen;
+      
+     
