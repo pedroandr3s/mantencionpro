@@ -11,7 +11,8 @@ import {
   IconButton,
   Container,
   useMediaQuery,
-  useTheme
+  useTheme,
+  CircularProgress
 } from '@mui/material';
 import { 
   Build as BuildIcon, 
@@ -19,91 +20,166 @@ import {
   Inventory as InventoryIcon,
   CheckCircle as CheckCircleIcon,
   Warning as WarningIcon,
-  Logout as LogoutIcon
+  Logout as LogoutIcon,
+  Refresh as RefreshIcon
 } from '@mui/icons-material';
-import { getAuth } from 'firebase/auth';
-import { getFirestore, collection, query, where, getDocs } from 'firebase/firestore';
+import { getAuth, signOut } from 'firebase/auth';
+import { getFirestore, collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
 import firebaseApp from '../firebase/credenciales';
 import './Home.css';
 
 const auth = getAuth(firebaseApp);
 const firestore = getFirestore(firebaseApp);
 
+/**
+ * Home component for the MantencionPRO dashboard
+ * Shows key metrics and quick actions based on user role
+ */
 const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
-  const [activeEquipments, setActiveEquipments] = useState(0);
-  const [pendingMaintenance, setPendingMaintenance] = useState(0);
-  const [lowInventory, setLowInventory] = useState(0);
-  const [disponibilidadCount, setDisponibilidadCount] = useState(0);
+  // Dashboard metrics state
+  const [stats, setStats] = useState({
+    equiposOperativos: 0,
+    mantencionesPendientes: 0,
+    inventarioBajo: 0,
+    proximaMantencion: 'No disponible',
+    equiposDisponibles: 0
+  });
+  const [recentActivities, setRecentActivities] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
   
+  // Responsive design hooks
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
+  // Load dashboard data on component mount
   useEffect(() => {
     loadDashboardData();
   }, []);
 
+  // Function to fetch and load dashboard data
   const loadDashboardData = async () => {
     setIsLoading(true);
+    setError(null);
+    
     try {
-      // Obtener equipos
+      // Get equipment data
       const equiposRef = collection(firestore, 'equipos');
       const equiposSnapshot = await getDocs(equiposRef);
       
-      // Equipos con estado "Operativo"
+      // Count equipment with "Operativo" status
       const equiposOperativos = equiposSnapshot.docs.filter(doc => 
         doc.data().estado === 'Operativo'
       ).length;
       
-      setActiveEquipments(equiposOperativos);
-      
-      // Equipos con estadoDisponibilidad "disponible"
-      const equiposDisponibilidad = equiposSnapshot.docs.filter(doc => 
+      // Count equipment with "disponible" availability status
+      const equiposDisponibles = equiposSnapshot.docs.filter(doc => 
         doc.data().estadoDisponibilidad === 'disponible'
       ).length;
       
-      setDisponibilidadCount(equiposDisponibilidad);
+      // Find equipment with closest maintenance date
+      let proximaMantencion = 'No disponible';
+      const today = new Date();
+      let closestDate = null;
+      
+      equiposSnapshot.docs.forEach(doc => {
+        const equipoData = doc.data();
+        if (equipoData.proximoMantenimiento) {
+          const mantenimientoDate = new Date(equipoData.proximoMantenimiento);
+          if (mantenimientoDate > today && (!closestDate || mantenimientoDate < closestDate)) {
+            closestDate = mantenimientoDate;
+          }
+        }
+      });
+      
+      if (closestDate) {
+        const diffTime = Math.abs(closestDate - today);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        proximaMantencion = diffDays > 1 ? `${diffDays} días` : '1 día';
+      }
 
-      // Solo cargar datos adicionales para admin y mecánico
+      // Only load additional data for admin and mechanic roles
+      let mantencionesPendientes = 0;
+      let inventarioBajo = 0;
+      
       if (userRole === 'admin' || userRole === 'mecanico') {
-        // Obtener mantenciones pendientes
-        const mantencionesRef = collection(firestore, 'mantenciones');
+        // Get pending maintenance count
         try {
+          const mantencionesRef = collection(firestore, 'mantenimientos');
           const mantencionesQuery = query(
             mantencionesRef, 
-            where('estado', '==', 'pendiente')
+            where('estado', 'in', ['pendiente', 'en_proceso'])
           );
           const mantencionesSnapshot = await getDocs(mantencionesQuery);
-          setPendingMaintenance(mantencionesSnapshot.size);
+          mantencionesPendientes = mantencionesSnapshot.size;
+          
+          // Get recent activities
+          const recentMaintenanceQuery = query(
+            mantencionesRef,
+            orderBy('fechaActualizacion', 'desc'),
+            limit(3)
+          );
+          const recentMaintenanceSnap = await getDocs(recentMaintenanceQuery);
+          
+          const maintenanceActivities = recentMaintenanceSnap.docs.map(doc => {
+            const mant = doc.data();
+            return {
+              id: doc.id,
+              type: 'maintenance',
+              title: `Mantenimiento ${mant.tipo === 'preventivo' ? 'Preventivo' : 'Correctivo'}`,
+              description: `${mant.equipo} - ${mant.descripcion?.substring(0, 60)}${mant.descripcion?.length > 60 ? '...' : ''}`,
+              date: mant.fechaActualizacion?.toDate() || new Date(),
+              estado: mant.estado
+            };
+          });
+          
+          setRecentActivities(maintenanceActivities);
         } catch (error) {
           console.error("Error al cargar mantenciones:", error);
-          setPendingMaintenance(0);
+          mantencionesPendientes = 0;
         }
 
-        // Obtener inventario bajo
+        // Get low inventory items
         try {
-          const itemsRef = collection(firestore, 'inventario');
-          const itemsSnapshot = await getDocs(itemsRef);
-          const itemsBajos = itemsSnapshot.docs.filter(doc => {
+          // Check both 'inventario' and 'repuestos' collections
+          const inventarioRef = collection(firestore, 'inventario');
+          const inventarioSnapshot = await getDocs(inventarioRef);
+          const itemsBajosInventario = inventarioSnapshot.docs.filter(doc => {
             const item = doc.data();
             return item.cantidad <= item.minimo;
           }).length;
-          setLowInventory(itemsBajos);
+          
+          const repuestosRef = collection(firestore, 'repuestos');
+          const repuestosQuery = query(repuestosRef, where('stock', '<', 5));
+          const repuestosSnapshot = await getDocs(repuestosQuery);
+          
+          inventarioBajo = itemsBajosInventario + repuestosSnapshot.size;
         } catch (error) {
           console.error("Error al cargar inventario:", error);
-          setLowInventory(0);
+          inventarioBajo = 0;
         }
       }
 
+      // Update state with fetched data
+      setStats({
+        equiposOperativos,
+        mantencionesPendientes,
+        inventarioBajo,
+        proximaMantencion,
+        equiposDisponibles
+      });
+
     } catch (error) {
       console.error("Error al cargar datos del dashboard:", error);
+      setError("Error al cargar datos. Intente nuevamente.");
     } finally {
       setIsLoading(false);
     }
   };
 
+  // Stat Card component for displaying metrics
   const StatCard = ({ title, value, icon, color }) => (
-    <Card className="stat-card">
+    <Card className="stat-card" elevation={2}>
       <CardContent>
         <Box display="flex" flexDirection={isMobile ? 'column' : 'row'} 
              justifyContent="space-between" alignItems="center" className="stat-card-content">
@@ -123,9 +199,63 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
     </Card>
   );
 
+  // Activity Item component for recent activities
+  const ActivityItem = ({ activity }) => (
+    <Box 
+      sx={{
+        p: 2, 
+        mb: 1,
+        borderRadius: 1,
+        bgcolor: 'background.paper',
+        border: '1px solid #eee'
+      }}
+    >
+      <Box display="flex" justifyContent="space-between" alignItems="center">
+        <Typography variant="subtitle1" fontWeight="bold">
+          {activity.title}
+        </Typography>
+        <Typography variant="caption" color="textSecondary">
+          {activity.date instanceof Date 
+            ? activity.date.toLocaleDateString() 
+            : 'Fecha no disponible'}
+        </Typography>
+      </Box>
+      <Typography variant="body2" mt={1}>
+        {activity.description}
+      </Typography>
+      <Box mt={1} display="flex" justifyContent="flex-end">
+        <Typography 
+          variant="caption" 
+          sx={{
+            px: 1,
+            py: 0.5,
+            borderRadius: 1,
+            bgcolor: activity.estado === 'pendiente' 
+              ? '#FFF7E6' 
+              : activity.estado === 'en_proceso'
+                ? '#E6F7FF'
+                : '#F6FFED',
+            color: activity.estado === 'pendiente' 
+              ? '#FA8C16' 
+              : activity.estado === 'en_proceso'
+                ? '#1890FF'
+                : '#52C41A',
+          }}
+        >
+          {activity.estado === 'pendiente' 
+            ? 'Pendiente' 
+            : activity.estado === 'en_proceso' 
+              ? 'En Proceso' 
+              : 'Completado'}
+        </Typography>
+      </Box>
+    </Box>
+  );
+
+  // View for driver role
   const renderDriverView = () => {
-    // Encontrar el índice de la pestaña "Reportar Falla" para conductores
-    let reporteFallaTabIndex = 2; // Predeterminado para conductores según MantencionPRO.js
+    // Find the index of "Reportar Falla" tab for drivers
+    const reporteFallaTabIndex = 2; // Default for drivers based on MantencionPRO.js
     
     return (
       <Box>
@@ -133,9 +263,9 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
           <Grid item xs={12}>
             <StatCard
               title="Equipos Disponibles"
-              value={disponibilidadCount}
+              value={stats.equiposDisponibles}
               icon={<CheckCircleIcon />}
-              color="#2196F3"
+              color="#52C41A"
             />
           </Grid>
         </Grid>
@@ -146,11 +276,12 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
           </Typography>
           <Button
             variant="contained"
-            color="error"
+            color="warning"
             fullWidth
             startIcon={<WarningIcon />}
             className="action-button"
             onClick={() => onNavigateToTab(reporteFallaTabIndex)}
+            sx={{ py: 1.5, borderRadius: 2 }}
           >
             Reportar Falla
           </Button>
@@ -159,18 +290,19 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
     );
   };
 
+  // View for admin and mechanic roles
   const renderAdminMechanicView = () => {
-    // Encontrar los índices de las pestañas para admin/mecánico
-    let mantencionTabIndex = 3; // Índice para "Mantención" según MantencionPRO.js
-    let inventarioTabIndex = 1; // Índice para "Inventario" según MantencionPRO.js
+    // Tab indices for admin/mechanic
+    const mantencionTabIndex = 3; // Index for "Mantención" based on MantencionPRO.js
+    const inventarioTabIndex = 1; // Index for "Inventario" based on MantencionPRO.js
     
     return (
-      <Box>
+      <>
         <Grid container spacing={isMobile ? 2 : 3}>
           <Grid item xs={12} sm={6} md={3}>
             <StatCard
-              title="Equipos Disponibles"
-              value={activeEquipments}
+              title="Equipos Operativos"
+              value={stats.equiposOperativos}
               icon={<CarIcon />}
               color="#4CAF50"
             />
@@ -178,7 +310,7 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
           <Grid item xs={12} sm={6} md={3}>
             <StatCard
               title="Mantenciones Pendientes"
-              value={pendingMaintenance}
+              value={stats.mantencionesPendientes}
               icon={<BuildIcon />}
               color="#FF9800"
             />
@@ -186,7 +318,7 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
           <Grid item xs={12} sm={6} md={3}>
             <StatCard
               title="Inventario Bajo"
-              value={lowInventory}
+              value={stats.inventarioBajo}
               icon={<InventoryIcon />}
               color="#F44336"
             />
@@ -194,14 +326,14 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
           <Grid item xs={12} sm={6} md={3}>
             <StatCard
               title="Próxima Mantención"
-              value="3 días"
+              value={stats.proximaMantencion}
               icon={<CheckCircleIcon />}
               color="#2196F3"
             />
           </Grid>
         </Grid>
 
-        <Box className="actions-container">
+        <Box className="actions-container" mt={4} mb={4}>
           <Typography variant={isMobile ? 'h6' : 'h5'} gutterBottom>
             Acciones Rápidas
           </Typography>
@@ -214,6 +346,7 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
                 startIcon={<BuildIcon />}
                 className="action-button"
                 onClick={() => onNavigateToTab(mantencionTabIndex)}
+                sx={{ py: 1.5, borderRadius: 2 }}
               >
                 Nueva Mantención
               </Button>
@@ -226,18 +359,46 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
                 startIcon={<InventoryIcon />}
                 className="action-button"
                 onClick={() => onNavigateToTab(inventarioTabIndex)}
+                sx={{ py: 1.5, borderRadius: 2 }}
               >
                 Gestionar Inventario
               </Button>
             </Grid>
           </Grid>
         </Box>
-      </Box>
+        
+        {/* Recent Activities Section */}
+        {recentActivities.length > 0 && (
+          <Box mt={4}>
+            <Typography variant={isMobile ? 'h6' : 'h5'} gutterBottom>
+              Actividades Recientes
+            </Typography>
+            {recentActivities.map((activity) => (
+              <ActivityItem key={activity.id} activity={activity} />
+            ))}
+          </Box>
+        )}
+      </>
     );
+  };
+
+  // Handle sign out
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      localStorage.removeItem('userData');
+      if (onLogout && typeof onLogout === 'function') {
+        onLogout();
+      }
+    } catch (error) {
+      console.error("Error al cerrar sesión:", error);
+      alert("Error al cerrar sesión");
+    }
   };
 
   return (
     <Box className="home-container">
+      {/* App Bar / Header */}
       <AppBar position="static" color="default" elevation={1}>
         <Toolbar>
           <Box sx={{ flexGrow: 1 }}>
@@ -245,17 +406,62 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
               Panel Principal
             </Typography>
             <Typography variant="body2" color="textSecondary">
-              {userData?.correo} - {userRole?.charAt(0).toUpperCase() + userRole?.slice(1)}
+              {userData?.nombre || userData?.correo} - {
+                userRole === 'admin' ? 'Administrador' : 
+                userRole === 'mecanico' ? 'Mecánico' : 
+                userRole === 'conductor' ? 'Conductor' : 'Usuario'
+              }
             </Typography>
           </Box>
-          <IconButton color="error" onClick={onLogout}>
+          <IconButton 
+            color="primary" 
+            onClick={loadDashboardData} 
+            disabled={isLoading}
+            sx={{ mr: 1 }}
+          >
+            <RefreshIcon />
+          </IconButton>
+          <IconButton color="error" onClick={handleLogout}>
             <LogoutIcon />
           </IconButton>
         </Toolbar>
       </AppBar>
 
-      <Container maxWidth="lg" className="main-content">
-        {userRole === 'conductor' ? renderDriverView() : renderAdminMechanicView()}
+      {/* Main Content */}
+      <Container maxWidth="lg" className="main-content" sx={{ py: 3 }}>
+        {/* Error Message */}
+        {error && (
+          <Box 
+            sx={{ 
+              p: 2, 
+              mb: 3, 
+              borderRadius: 1, 
+              bgcolor: '#FFF1F0', 
+              border: '1px solid #FFA39E' 
+            }}
+          >
+            <Typography color="error">{error}</Typography>
+            <Button 
+              startIcon={<RefreshIcon />}
+              onClick={loadDashboardData}
+              variant="outlined"
+              color="error"
+              size="small"
+              sx={{ mt: 1 }}
+            >
+              Reintentar
+            </Button>
+          </Box>
+        )}
+        
+        {/* Loading State */}
+        {isLoading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 5 }}>
+            <CircularProgress />
+          </Box>
+        ) : (
+          userRole === 'conductor' ? renderDriverView() : renderAdminMechanicView()
+        )}
       </Container>
     </Box>
   );

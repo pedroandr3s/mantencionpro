@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from 'react';
-// Imports de Firebase se mantienen igual
 import firebaseApp from "../firebase/credenciales";
 import {
   getFirestore,
   collection,
   doc,
   addDoc,
-  setDoc,
   getDoc,
   getDocs,
   updateDoc,
@@ -16,14 +14,22 @@ import {
   where
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
-// Importamos íconos de una biblioteca compatible con React
-import { IoAdd, IoClose, IoCloseCircle, IoAddCircleOutline, IoAddCircle, IoChevronForward } from "react-icons/io5";
+import './MantencionScreen.css';
+// Using react-icons for consistent UI elements
+import { 
+  IoAdd, 
+  IoClose, 
+  IoCloseCircle, 
+  IoAddCircleOutline, 
+  IoAddCircle, 
+  IoChevronForward 
+} from "react-icons/io5";
 
 const firestore = getFirestore(firebaseApp);
 const auth = getAuth(firebaseApp);
 
 const MantencionScreen = ({ navigation, route }) => {
-  // Estados para la gestión de mantenimientos
+  // States for maintenance management
   const [mantenimientos, setMantenimientos] = useState([]);
   const [filtroTipo, setFiltroTipo] = useState('todos');
   const [modalVisible, setModalVisible] = useState(false);
@@ -34,7 +40,7 @@ const MantencionScreen = ({ navigation, route }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
 
-  // Estado para el formulario
+  // Form state
   const [formData, setFormData] = useState({
     equipo: '',
     tipo: 'preventivo',
@@ -46,7 +52,7 @@ const MantencionScreen = ({ navigation, route }) => {
     repuestos: []
   });
 
-  // Verificar si se está accediendo desde EquiposScreen
+  // Check if accessing from EquiposScreen
   useEffect(() => {
     if (route?.params?.equipoId && route?.params?.equipoNumero) {
       const equipoSeleccionado = {
@@ -62,24 +68,23 @@ const MantencionScreen = ({ navigation, route }) => {
         kilometraje: equipoSeleccionado.kilometraje.toString()
       }));
       
-      // Abrir automáticamente el modal de nuevo mantenimiento
+      // Automatically open new maintenance modal
       setModalVisible(true);
     }
   }, [route?.params]);
 
-  // Cargar datos desde Firebase
+  // Load data from Firebase
   useEffect(() => {
     const cargarDatos = async () => {
       try {
         setIsLoading(true);
         setErrorMsg(null);
         
-        // Obtener el usuario actual para usar como mecánico por defecto
+        // Get current user to use as default mechanic
         const currentUser = auth.currentUser;
         let nombreMecanico = 'Usuario sin identificar';
         
         if (currentUser) {
-          // Intentar obtener el nombre del usuario desde Firestore
           try {
             const docRef = doc(firestore, `usuarios/${currentUser.uid}`);
             const docSnap = await getDoc(docRef);
@@ -96,13 +101,13 @@ const MantencionScreen = ({ navigation, route }) => {
           }
         }
         
-        // Actualizar el formulario con el mecánico actual
+        // Update form with current mechanic
         setFormData(prev => ({
           ...prev,
           mecanico: nombreMecanico
         }));
         
-        // 1. Cargar mantenimientos
+        // 1. Load maintenance records
         const mantenimientosRef = collection(firestore, 'mantenimientos');
         const q = query(mantenimientosRef, orderBy('fecha', 'desc'));
         const mantenimientosSnap = await getDocs(q);
@@ -119,7 +124,7 @@ const MantencionScreen = ({ navigation, route }) => {
         
         setMantenimientos(mantenimientosData);
         
-        // 2. Cargar equipos
+        // 2. Load equipment
         const equiposRef = collection(firestore, 'equipos');
         const equiposSnap = await getDocs(equiposRef);
         
@@ -133,7 +138,7 @@ const MantencionScreen = ({ navigation, route }) => {
         
         setEquipos(equiposData);
         
-        // 3. Cargar repuestos
+        // 3. Load spare parts
         const repuestosRef = collection(firestore, 'repuestos');
         const repuestosSnap = await getDocs(repuestosRef);
         
@@ -146,7 +151,6 @@ const MantencionScreen = ({ navigation, route }) => {
         });
         
         setRepuestos(repuestosData);
-        
         setIsLoading(false);
       } catch (error) {
         console.error("Error al cargar datos:", error);
@@ -158,14 +162,14 @@ const MantencionScreen = ({ navigation, route }) => {
     cargarDatos();
   }, []);
 
-  // Filtrar mantenimientos según el tipo seleccionado
+  // Filter maintenance records based on selected type
   const mantenimientosFiltrados = filtroTipo === 'todos' 
     ? mantenimientos 
     : mantenimientos.filter(m => m.tipo === filtroTipo);
 
-  // Función para agregar un nuevo mantenimiento
+  // Function to add a new maintenance record
   const handleAddMantenimiento = async () => {
-    // Validar campos
+    // Validate fields
     if (!formData.equipo || !formData.descripcion) {
       alert('Error: Por favor complete los campos obligatorios');
       return;
@@ -174,28 +178,28 @@ const MantencionScreen = ({ navigation, route }) => {
     try {
       setIsLoading(true);
       
-      // Crear nuevo mantenimiento
+      // Create new maintenance record
       const nuevoMantenimiento = {
         ...formData,
         kilometraje: parseInt(formData.kilometraje) || 0,
         repuestos: repuestosSeleccionados,
-        equipoId: formData.equipoId, // Asegúrate de que este campo exista
+        equipoId: formData.equipoId,
         fechaCreacion: serverTimestamp(),
         fechaActualizacion: serverTimestamp()
       };  
 
-      // Agregar a Firestore
+      // Add to Firestore
       const mantenimientosRef = collection(firestore, 'mantenimientos');
       const docRef = await addDoc(mantenimientosRef, nuevoMantenimiento);
 
-      // Actualizar estado local
+      // Update local state
       setMantenimientos([{
         id: docRef.id,
         ...nuevoMantenimiento,
         fecha: nuevoMantenimiento.fecha
       }, ...mantenimientos]);
 
-      // Si hay repuestos seleccionados, actualizar su stock
+      // If spare parts were selected, update their stock
       if (repuestosSeleccionados.length > 0) {
         for (const repuesto of repuestosSeleccionados) {
           const repuestoRef = doc(firestore, 'repuestos', repuesto.id);
@@ -212,7 +216,7 @@ const MantencionScreen = ({ navigation, route }) => {
           }
         }
         
-        // Actualizar la lista de repuestos local
+        // Update local spare parts list
         const repuestosRef = collection(firestore, 'repuestos');
         const repuestosSnap = await getDocs(repuestosRef);
         
@@ -227,7 +231,7 @@ const MantencionScreen = ({ navigation, route }) => {
         setRepuestos(repuestosData);
       }
       
-      // Actualizar el kilometraje del equipo si es necesario
+      // Update equipment mileage if needed
       if (formData.equipoId) {
         const equipoRef = doc(firestore, 'equipos', formData.equipoId);
         const equipoDoc = await getDoc(equipoRef);
@@ -243,7 +247,7 @@ const MantencionScreen = ({ navigation, route }) => {
       
       setModalVisible(false);
       
-      // Reiniciar el formulario
+      // Reset the form
       setFormData({
         equipo: '',
         tipo: 'preventivo',
@@ -251,7 +255,7 @@ const MantencionScreen = ({ navigation, route }) => {
         fecha: new Date().toISOString().split('T')[0],
         estado: 'pendiente',
         kilometraje: '',
-        mecanico: formData.mecanico, // Mantener el mecánico actual
+        mecanico: formData.mecanico, // Keep current mechanic
         repuestos: []
       });
       
@@ -266,31 +270,31 @@ const MantencionScreen = ({ navigation, route }) => {
     }
   };
 
-  // Función para agregar repuestos al mantenimiento
+  // Function to add spare parts to maintenance
   const handleAddRepuesto = (id, nombre, stockActual) => {
-    // Verificar si ya está en la lista
+    // Check if already in the list
     const existente = repuestosSeleccionados.find(r => r.id === id);
     
     if (existente) {
-      // Verificar stock antes de aumentar la cantidad
+      // Check stock before increasing quantity
       if (existente.cantidad >= stockActual) {
         alert(`Error: No hay suficiente stock de ${nombre}. Disponible: ${stockActual}`);
         return;
       }
       
-      // Actualizar cantidad
+      // Update quantity
       const actualizados = repuestosSeleccionados.map(r => 
         r.id === id ? { ...r, cantidad: r.cantidad + 1 } : r
       );
       setRepuestosSeleccionados(actualizados);
     } else {
-      // Verificar que haya stock
+      // Check that there is stock
       if (stockActual <= 0) {
         alert(`Error: No hay stock disponible de ${nombre}`);
         return;
       }
       
-      // Agregar nuevo
+      // Add new
       setRepuestosSeleccionados([
         ...repuestosSeleccionados,
         { id, nombre, cantidad: 1 }
@@ -298,18 +302,18 @@ const MantencionScreen = ({ navigation, route }) => {
     }
   };
 
-  // Función para eliminar un repuesto
+  // Function to remove a spare part
   const handleRemoveRepuesto = (id) => {
     const actualizados = repuestosSeleccionados.filter(r => r.id !== id);
     setRepuestosSeleccionados(actualizados);
   };
 
-  // Función para cambiar el estado de un mantenimiento
+  // Function to change maintenance status
   const handleCambiarEstado = async (id, nuevoEstado) => {
     try {
       setIsLoading(true);
       
-      // Actualizar en Firestore
+      // Update in Firestore
       const mantenimientoRef = doc(firestore, 'mantenimientos', id);
       const mantenimientoDoc = await getDoc(mantenimientoRef);
       
@@ -325,7 +329,7 @@ const MantencionScreen = ({ navigation, route }) => {
         fechaCompletado: nuevoEstado === 'completado' ? new Date().toISOString().split('T')[0] : null
       });
       
-      // Si se completó el mantenimiento, actualizar el equipo
+      // If maintenance is completed, update the equipment
       if (nuevoEstado === 'completado' && mantenimientoData.equipoId) {
         const equipoRef = doc(firestore, 'equipos', mantenimientoData.equipoId);
         await updateDoc(equipoRef, {
@@ -336,7 +340,7 @@ const MantencionScreen = ({ navigation, route }) => {
         });
       }
       
-      // Actualizar estado local
+      // Update local state
       const mantenimientosActualizados = mantenimientos.map(m => 
         m.id === id ? { 
           ...m, 
@@ -356,24 +360,24 @@ const MantencionScreen = ({ navigation, route }) => {
     }
   };
   
-  // Función para calcular la fecha del próximo mantenimiento
+  // Function to calculate next maintenance date
   const calcularProximoMantenimiento = (fechaActual, tipoMantenimiento) => {
     const fecha = new Date(fechaActual);
-    // Si es preventivo, programar para 3 meses después
-    // Si es correctivo, programar para 1 mes después (revisión)
+    // If preventive, schedule for 3 months later
+    // If corrective, schedule for 1 month later (review)
     const mesesAdicionales = tipoMantenimiento === 'preventivo' ? 3 : 1;
     fecha.setMonth(fecha.getMonth() + mesesAdicionales);
     return fecha.toISOString().split('T')[0];
   };
 
-  // Función para ver el historial de mantenimientos de un equipo
+  // Function to view maintenance history for a piece of equipment
   const verHistorialEquipo = (equipoId) => {
     if (navigation && navigation.navigate) {
       navigation.navigate('HistorialMantenimiento', { equipoId });
     }
   };
 
-  // Renderizado de un ítem de mantenimiento
+  // Render a maintenance item
   const renderMantenimientoItem = (item) => (
     <div className="mantenimiento-item" key={item.id}>
       <div className="mantenimiento-header">
@@ -488,6 +492,7 @@ const MantencionScreen = ({ navigation, route }) => {
     </div>
   );
 
+  // Render loading spinner if initial data load
   if (isLoading && mantenimientos.length === 0) {
     return (
       <div className="loading-container">
@@ -499,6 +504,7 @@ const MantencionScreen = ({ navigation, route }) => {
 
   return (
     <div className="container">
+      {/* Loading overlay for operations */}
       {isLoading && (
         <div className="overlay-loading">
           <div className="loading-spinner"></div>
@@ -538,6 +544,7 @@ const MantencionScreen = ({ navigation, route }) => {
         </div>
       </div>
       
+      {/* Error message display */}
       {errorMsg && (
         <div className="error-container">
           <p className="error-text">{errorMsg}</p>
@@ -550,6 +557,7 @@ const MantencionScreen = ({ navigation, route }) => {
         </div>
       )}
       
+      {/* Maintenance list */}
       <div className="lista-container">
         {mantenimientosFiltrados.length > 0 ? (
           mantenimientosFiltrados.map(item => renderMantenimientoItem(item))
@@ -560,6 +568,7 @@ const MantencionScreen = ({ navigation, route }) => {
         )}
       </div>
       
+      {/* Add maintenance button */}
       <button 
         className="add-button"
         onClick={() => setModalVisible(true)}
@@ -568,7 +577,7 @@ const MantencionScreen = ({ navigation, route }) => {
         <IoAdd size={30} color="white" />
       </button>
       
-      {/* Modal para agregar mantenimiento */}
+      {/* Modal for adding maintenance */}
       {modalVisible && (
         <div className="modal-backdrop">
           <div className="modal-container">
@@ -597,7 +606,7 @@ const MantencionScreen = ({ navigation, route }) => {
                         kilometraje: equipoSeleccionado ? equipoSeleccionado.kilometraje.toString() : ''
                       });
                     }}
-                    disabled={!!route?.params?.equipoId} // Desactivar si viene preseleccionado
+                    disabled={!!route?.params?.equipoId} // Disable if pre-selected
                   >
                     <option value="">Seleccione un equipo</option>
                     {equipos.map(equipo => (
@@ -689,7 +698,7 @@ const MantencionScreen = ({ navigation, route }) => {
         </div>
       )}
       
-      {/* Modal para seleccionar repuestos */}
+      {/* Modal for selecting spare parts */}
       {modalRepuestosVisible && (
         <div className="modal-backdrop">
           <div className="modal-container">
@@ -741,425 +750,7 @@ const MantencionScreen = ({ navigation, route }) => {
         </div>
       )}
       
-      <style jsx>{`
-        .container {
-          position: relative;
-          min-height: 100vh;
-          background-color: #F5F5F5;
-          font-family: sans-serif;
-        }
-        
-        .header {
-          padding: 16px;
-          background-color: #FFF;
-          border-bottom: 1px solid #E0E0E0;
-        }
-        
-        .title {
-          font-size: 20px;
-          font-weight: bold;
-          margin-bottom: 12px;
-        }
-        
-        .filtro-container {
-          display: flex;
-          margin-top: 8px;
-        }
-        
-        .filtro-btn {
-          padding: 6px 12px;
-          border-radius: 20px;
-          margin-right: 8px;
-          background-color: #F5F5F5;
-          border: none;
-          cursor: pointer;
-        }
-        
-        .filtro-btn-activo {
-          background-color: #1890FF;
-          color: white;
-        }
-        
-        .filtro-text-activo {
-          font-weight: bold;
-        }
-        
-        .lista-container {
-          padding: 16px;
-        }
-        
-        .mantenimiento-item {
-          background-color: #FFF;
-          border-radius: 8px;
-          padding: 16px;
-          margin-bottom: 16px;
-          box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-        }
-        
-        .mantenimiento-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 12px;
-        }
-        
-        .mantenimiento-equipo {
-          font-size: 18px;
-          font-weight: bold;
-          margin: 0;
-        }
-        
-        .estado-badge {
-          padding: 4px 8px;
-          border-radius: 4px;
-          color: white;
-          font-size: 12px;
-          font-weight: bold;
-        }
-        
-        .mantenimiento-info {
-          background-color: #F9F9F9;
-          border-radius: 4px;
-          padding: 12px;
-          margin-bottom: 12px;
-        }
-        
-        .info-row {
-          display: flex;
-          margin-bottom: 8display: flex;
-          margin-bottom: 8px;
-          justify-content: space-between;
-        }
-        
-        .info-item {
-          flex: 1;
-        }
-        
-        .info-label {
-          font-size: 12px;
-          color: #767676;
-          display: block;
-          margin-bottom: 2px;
-        }
-        
-        .tipo-text {
-          font-weight: bold;
-        }
-        
-        .descripcion-text {
-          margin-top: 4px;
-          margin-bottom: 12px;
-        }
-        
-        .repuesto-item {
-          margin: 4px 0;
-          font-size: 14px;
-        }
-        
-        .no-repuestos {
-          color: #767676;
-          font-style: italic;
-          margin-top: 4px;
-        }
-        
-        .acciones-container {
-          display: flex;
-          margin-top: 16px;
-          gap: 8px;
-        }
-        
-        .accion-btn {
-          flex: 1;
-          padding: 8px 0;
-          border-radius: 4px;
-          border: none;
-          font-weight: bold;
-          cursor: pointer;
-        }
-        
-        .iniciar-btn {
-          background-color: #1890FF;
-          color: white;
-        }
-        
-        .completar-btn {
-          background-color: #52C41A;
-          color: white;
-        }
-        
-        .repuestos-btn {
-          background-color: #F5F5F5;
-          color: #1890FF;
-          border: 1px solid #1890FF;
-        }
-        
-        .ver-historial-btn {
-          width: 100%;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 8px 12px;
-          margin-top: 12px;
-          background-color: #F5F5F5;
-          border: none;
-          border-radius: 4px;
-          color: #1890FF;
-          font-size: 14px;
-          cursor: pointer;
-        }
-        
-        .add-button {
-          position: fixed;
-          bottom: 64px;
-          right: 24px;
-          width: 56px;
-          height: 56px;
-          border-radius: 28px;
-          background-color: #1890FF;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-          border: none;
-          cursor: pointer;
-        }
-        
-        .modal-backdrop {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background-color: rgba(0,0,0,0.5);
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          z-index: 1000;
-        }
-        
-        .modal-container {
-          width: 90%;
-          max-width: 500px;
-          max-height: 90vh;
-          background-color: #FFF;
-          border-radius: 8px;
-          overflow-y: auto;
-        }
-        
-        .modal-content {
-          padding: 16px;
-        }
-        
-        .modal-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 16px;
-        }
-        
-        .modal-title {
-          font-size: 18px;
-          font-weight: bold;
-          margin: 0;
-        }
-        
-        .close-button {
-          background: none;
-          border: none;
-          cursor: pointer;
-        }
-        
-        .form-container {
-          display: flex;
-          flex-direction: column;
-          gap: 16px;
-        }
-        
-        .input-label {
-          display: block;
-          font-size: 14px;
-          font-weight: bold;
-          margin-bottom: 4px;
-        }
-        
-        .text-input, .select-input, .text-area {
-          width: 100%;
-          padding: 8px;
-          border-radius: 4px;
-          border: 1px solid #E0E0E0;
-          font-size: 16px;
-          margin-top: 4px;
-        }
-        
-        .repuestos-container {
-          margin-top: 8px;
-        }
-        
-        .repuesto-seleccionado {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          background-color: #F5F5F5;
-          padding: 8px;
-          border-radius: 4px;
-          margin-bottom: 8px;
-        }
-        
-        .repuesto-nombre {
-          font-size: 14px;
-        }
-        
-        .remove-repuesto-btn {
-          background: none;
-          border: none;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-        }
-        
-        .agregar-repuesto-btn {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          background: none;
-          border: 1px dashed #1890FF;
-          border-radius: 4px;
-          padding: 8px;
-          color: #1890FF;
-          width: 100%;
-          justify-content: center;
-          cursor: pointer;
-        }
-        
-        .repuestos-list {
-          max-height: 300px;
-          overflow-y: auto;
-          margin-bottom: 16px;
-        }
-        
-        .repuesto-list-item {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 12px;
-          border-bottom: 1px solid #F0F0F0;
-          width: 100%;
-          text-align: left;
-          background: none;
-          border-left: none;
-          border-right: none;
-          border-top: none;
-          cursor: pointer;
-        }
-        
-        .repuesto-list-nombre {
-          font-size: 16px;
-          margin: 0 0 4px 0;
-        }
-        
-        .repuesto-list-stock {
-          margin: 0;
-          font-size: 14px;
-          color: #767676;
-        }
-        
-        .stock-agotado {
-          color: #FF4D4F;
-        }
-        
-        .agotado-text {
-          font-size: 12px;
-          color: #FF4D4F;
-          font-weight: bold;
-        }
-        
-        .submit-button {
-          background-color: #1890FF;
-          color: white;
-          border: none;
-          border-radius: 4px;
-          padding: 12px;
-          font-size: 16px;
-          font-weight: bold;
-          cursor: pointer;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-        }
-        
-        .empty-list {
-          text-align: center;
-          padding: 32px 0;
-          color: #767676;
-        }
-        
-        .loading-container, .overlay-loading {
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-          align-items: center;
-          height: 100%;
-        }
-        
-        .overlay-loading {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background-color: rgba(255,255,255,0.8);
-          z-index: 100;
-        }
-        
-        .loading-spinner, .button-spinner {
-          width: 40px;
-          height: 40px;
-          border: 3px solid #F0F0F0;
-          border-top: 3px solid #1890FF;
-          border-radius: 50%;
-          animation: spin 1s linear infinite;
-        }
-        
-        .button-spinner {
-          width: 20px;
-          height: 20px;
-          border-width: 2px;
-        }
-        
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-        
-        .loading-text {
-          margin-top: 16px;
-          color: #767676;
-        }
-        
-        .error-container {
-          background-color: #FFF1F0;
-          border: 1px solid #FFA39E;
-          padding: 16px;
-          border-radius: 4px;
-          margin: 16px;
-          text-align: center;
-        }
-        
-        .error-text {
-          color: #FF4D4F;
-          margin-bottom: 8px;
-        }
-        
-        .reload-button {
-          background-color: #FF4D4F;
-          color: white;
-          border: none;
-          border-radius: 4px;
-          padding: 8px 16px;
-          font-weight: bold;
-          cursor: pointer;
-        }
-      `}</style>
+      {/* Styles are defined in a separate CSS file imported at the top */}
     </div>
   );
 };

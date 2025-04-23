@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Tab, Tabs, useMediaQuery, useTheme } from '@mui/material';
 import HomeIcon from '@mui/icons-material/Home';
@@ -8,12 +8,12 @@ import DirectionsCarIcon from '@mui/icons-material/DirectionsCar';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import WarningIcon from '@mui/icons-material/Warning';
 
-// Importar Firebase
-import { getAuth } from 'firebase/auth';
+// Firebase imports
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, getDoc } from 'firebase/firestore';
 import firebaseApp from './firebase/credenciales';
 
-// Importaciones de los componentes que necesitaremos
+// Component imports
 import InventarioScreen from './components/InventarioScreen';
 import EquiposScreen from './components/EquiposScreen';
 import MantencionScreen from './components/MantencionScreen';
@@ -21,24 +21,32 @@ import DisponibilidadScreen from './components/DisponibilidadScreen';
 import ReporteFallasScreen from './components/ReporteFallasScreen';
 import Home from './components/Home';
 
+// Initialize Firebase services
 const auth = getAuth(firebaseApp);
 const firestore = getFirestore(firebaseApp);
 
-// Este componente manejará la navegación según el rol del usuario
-const MantencionPRO = ({ userData, onLogout }) => {
+/**
+ * Main navigation component for the MantencionPRO app
+ * Handles user role-based navigation and tab management
+ */
+const MantencionPRO = ({ userData: propUserData, onLogout }) => {
+  // State declarations
   const [userRole, setUserRole] = useState(null);
   const [userInfo, setUserInfo] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [currentTab, setCurrentTab] = useState(0);
+  const [error, setError] = useState(null);
+  
+  // Hooks
   const navigate = useNavigate();
   const location = useLocation();
   const isMountedRef = useRef(true);
   
-  // Usar theme y media query para detectar tamaño de pantalla
+  // Responsive design hooks
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  // Control de montaje del componente
+  // Cleanup on unmount
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -46,8 +54,9 @@ const MantencionPRO = ({ userData, onLogout }) => {
     };
   }, []);
 
-  // Obtener el rol del usuario siempre verificando en Firebase primero
+  // User authentication and role management
   useEffect(() => {
+    let unsubscribe = () => {};
     let isCancelled = false;
     
     const getUserData = async () => {
@@ -55,36 +64,38 @@ const MantencionPRO = ({ userData, onLogout }) => {
         if (!isMountedRef.current) return;
         
         setIsLoading(true);
-        console.log("MantencionPRO: Obteniendo datos del usuario...");
+        setError(null);
+        console.log("MantencionPRO: Fetching user data...");
         
-        // SIEMPRE verificar en Firebase primero para tener los datos más actuales
+        // Always check Firebase first for most up-to-date data
         const currentUser = auth.currentUser;
         
         if (currentUser) {
-          console.log("Verificando datos en Firebase para:", currentUser.uid);
+          console.log("Verifying Firebase data for:", currentUser.uid);
           try {
             const docRef = doc(firestore, `usuarios/${currentUser.uid}`);
             const docSnap = await getDoc(docRef);
             
             if (docSnap.exists() && !isCancelled && isMountedRef.current) {
               const firebaseUserData = docSnap.data();
-              console.log("Datos actuales obtenidos de Firebase:", firebaseUserData);
+              console.log("Current data from Firebase:", firebaseUserData);
               
-              // Asegurarse de que el rol existe
+              // Ensure role exists
               if (firebaseUserData.rol) {
                 const completeUserData = {
                   uid: currentUser.uid,
                   correo: currentUser.email,
+                  nombre: firebaseUserData.nombre || currentUser.email,
                   rol: firebaseUserData.rol
                 };
                 
-                // Guardar en el estado y en localStorage
+                // Save to state and localStorage
                 setUserRole(firebaseUserData.rol);
                 setUserInfo(completeUserData);
                 
-                // Actualizar localStorage con los datos correctos
+                // Update localStorage with correct data
                 localStorage.setItem('userData', JSON.stringify(completeUserData));
-                console.log("Datos actualizados en localStorage desde Firebase:", completeUserData);
+                console.log("Data updated in localStorage from Firebase:", completeUserData);
                 if (isMountedRef.current) {
                   setIsLoading(false);
                 }
@@ -92,28 +103,29 @@ const MantencionPRO = ({ userData, onLogout }) => {
               }
             }
           } catch (error) {
-            console.error("Error al verificar en Firebase:", error);
-            // Continuamos con los datos alternativos si hay error
+            console.error("Error verifying Firebase data:", error);
+            setError("Error al verificar datos en Firebase");
+            // Continue with alternative data sources if Firebase fails
           }
         }
         
-        // Si no se pudo obtener de Firebase, intentamos con los props
-        if (userData && userData.rol && !isCancelled && isMountedRef.current) {
-          console.log("Usando datos pasados como prop:", userData);
-          setUserRole(userData.rol);
-          setUserInfo(userData);
+        // If Firebase query failed, try with props
+        if (propUserData && propUserData.rol && !isCancelled && isMountedRef.current) {
+          console.log("Using prop data:", propUserData);
+          setUserRole(propUserData.rol);
+          setUserInfo(propUserData);
           setIsLoading(false);
           return;
         }
         
-        // Si no hay props, intentar obtener de localStorage
+        // If no props, try localStorage
         if (!isCancelled && isMountedRef.current) {
           try {
             const storedUserData = localStorage.getItem('userData');
             
             if (storedUserData && !isCancelled && isMountedRef.current) {
               const parsedUserData = JSON.parse(storedUserData);
-              console.log("Datos obtenidos de localStorage:", parsedUserData);
+              console.log("Data from localStorage:", parsedUserData);
               
               if (parsedUserData.rol) {
                 setUserRole(parsedUserData.rol);
@@ -123,60 +135,59 @@ const MantencionPRO = ({ userData, onLogout }) => {
               }
             }
           } catch (error) {
-            console.error("Error al obtener datos de localStorage:", error);
+            console.error("Error getting data from localStorage:", error);
+            setError("Error al recuperar datos guardados");
           }
         }
         
-        // Si no hay información de usuario en ningún lado pero hay usuario autenticado
+        // If no user information anywhere but authenticated user exists
         if (currentUser && !isCancelled && isMountedRef.current) {
-          console.error("Error: No se encontró información del usuario");
-          alert("No se encontró información de tu usuario");
+          console.error("Error: No user information found");
+          setError("No se encontró información de tu usuario");
           setIsLoading(false);
         } else if (!isCancelled && isMountedRef.current) {
-          console.error("Error: No hay usuario autenticado");
+          console.error("Error: No authenticated user");
           navigate('/login');
         }
       } catch (error) {
-        console.error('Error al obtener datos del usuario:', error);
+        console.error('Error fetching user data:', error);
         if (!isCancelled && isMountedRef.current) {
-          alert("Hubo un problema al obtener tu información de usuario");
+          setError("Hubo un problema al obtener tu información de usuario");
           setIsLoading(false);
         }
       }
     };
 
-    getUserData();
+    // Set up auth state listener for better reactivity
+    unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (!user && isMountedRef.current) {
+        // Redirect to login if no authenticated user
+        navigate('/login');
+      } else {
+        getUserData();
+      }
+    });
     
     return () => {
       isCancelled = true;
+      unsubscribe();
     };
-  }, [userData, navigate]);
+  }, [propUserData, navigate]);
 
-  // Función para manejar el cambio de tabs
+  // Tab change handler
   const handleTabChange = (event, newValue) => {
     setCurrentTab(newValue);
   };
 
-  // Función para navegar a una pestaña específica (se pasará como prop a los componentes hijos)
+  // Function to navigate to a specific tab (passed to child components)
   const navigateToTab = (tabIndex) => {
-    setCurrentTab(tabIndex);
+    if (tabIndex >= 0 && tabIndex < tabs.length) {
+      setCurrentTab(tabIndex);
+    }
   };
 
-  if (isLoading) {
-    return (
-      <div style={styles.loadingContainer}>
-        <div className="spinner-border text-primary" role="status">
-          <span className="visually-hidden">Loading...</span>
-        </div>
-        <p style={styles.loadingText}>Cargando...</p>
-      </div>
-    );
-  }
-
-  console.log("Renderizando interfaz para rol:", userRole);
-
-  // Definir tabs según el rol del usuario
-  const getTabs = () => {
+  // Define tabs based on user role - memoized to prevent unnecessary recalculations
+  const tabs = useMemo(() => {
     switch (userRole) {
       case 'admin':
       case 'mecanico':
@@ -200,21 +211,53 @@ const MantencionPRO = ({ userData, onLogout }) => {
           { label: 'Disponibilidad', icon: <CheckCircleIcon />, component: DisponibilidadScreen }
         ];
     }
-  };
+  }, [userRole]);
 
-  const tabs = getTabs();
+  // Loading state UI
+  if (isLoading) {
+    return (
+      <div style={styles.loadingContainer}>
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Loading...</span>
+        </div>
+        <p style={styles.loadingText}>Cargando...</p>
+      </div>
+    );
+  }
+
+  console.log("Rendering interface for role:", userRole);
+
+  // Get current component based on selected tab
   const CurrentComponent = tabs[currentTab].component;
 
   return (
     <div style={styles.container}>
+      {/* Error message if any */}
+      {error && (
+        <div style={styles.errorContainer}>
+          <p style={styles.errorText}>{error}</p>
+          <button 
+            style={styles.reloadButton}
+            onClick={() => window.location.reload()}
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
+      
+      {/* Main content area */}
       <div style={styles.content}>
         <CurrentComponent 
           userRole={userRole} 
           userData={userInfo} 
           onLogout={onLogout}
           onNavigateToTab={navigateToTab}
+          location={location}
+          navigate={navigate}
         />
       </div>
+      
+      {/* Bottom navigation tabs */}
       <div style={styles.tabContainer}>
         <Tabs
           value={currentTab}
@@ -224,8 +267,8 @@ const MantencionPRO = ({ userData, onLogout }) => {
           sx={{
             '& .MuiTab-root': {
               color: 'gray',
-              minWidth: isMobile ? '40px' : '80px', // Reducir el ancho mínimo en móvil
-              padding: isMobile ? '6px 0' : '12px 16px', // Reducir el padding en móvil
+              minWidth: isMobile ? '40px' : '80px',
+              padding: isMobile ? '6px 0' : '12px 16px',
               '&.Mui-selected': {
                 color: '#1890FF',
               },
@@ -239,15 +282,15 @@ const MantencionPRO = ({ userData, onLogout }) => {
             <Tab
               key={index}
               icon={tab.icon}
-              label={isMobile ? '' : tab.label} // No mostrar etiqueta en móvil
+              label={isMobile ? '' : tab.label}
               iconPosition="top"
               sx={{ 
                 textTransform: 'none',
                 '& .MuiSvgIcon-root': {
-                  fontSize: isMobile ? '1.2rem' : '1.5rem', // Iconos más pequeños en móvil
+                  fontSize: isMobile ? '1.2rem' : '1.5rem',
                 }
               }}
-              aria-label={tab.label} // Mantener accesibilidad
+              aria-label={tab.label}
             />
           ))}
         </Tabs>
@@ -256,6 +299,7 @@ const MantencionPRO = ({ userData, onLogout }) => {
   );
 };
 
+// Styles object
 const styles = {
   container: {
     display: 'flex',
@@ -284,6 +328,27 @@ const styles = {
     fontSize: '16px',
     color: '#1890FF',
   },
+  errorContainer: {
+    backgroundColor: '#FFF1F0',
+    border: '1px solid #FFA39E',
+    padding: '16px',
+    margin: '16px',
+    borderRadius: '4px',
+    textAlign: 'center',
+  },
+  errorText: {
+    color: '#FF4D4F',
+    marginBottom: '8px',
+  },
+  reloadButton: {
+    backgroundColor: '#FF4D4F',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    padding: '8px 16px',
+    fontWeight: 'bold',
+    cursor: 'pointer',
+  }
 };
 
 export default MantencionPRO;

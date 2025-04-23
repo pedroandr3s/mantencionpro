@@ -14,7 +14,6 @@ import {
   TableRow,
   Paper,
   IconButton,
-  Fab,
   Typography,
   Box,
   Select,
@@ -27,7 +26,6 @@ import {
   CardContent,
   CardActions,
   Chip,
-  Tooltip,
   Alert,
   Collapse,
   InputAdornment
@@ -136,100 +134,142 @@ const EquiposScreen = ({ navigation }) => {
 
         await cargarConductores();
         
-        // 2. Suscribirse a cambios en mantenimientos primero (sin anidación)
+        // 2. Suscribirse a cambios en mantenimientos
         const mantenimientosRef = collection(firestore, 'mantenimientos');
         unsubscribeMantenimientos = onSnapshot(mantenimientosRef, (mantenimientosSnap) => {
           if (!isMounted.current) return;
           
-          const mantenimientosData = mantenimientosSnap.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          }));
-          
-          setMantenimientos(mantenimientosData);
-        });
-        
-        // 3. Suscribirse a cambios en equipos (sin anidación)
-        const equiposRef = collection(firestore, 'equipos');
-        const qEquipos = query(equiposRef, orderBy('numero', 'asc'));
-        
-        unsubscribeEquipos = onSnapshot(qEquipos, (equiposSnap) => {
-          if (!isMounted.current) return;
-          
-          const equiposData = equiposSnap.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            historial: []
-          }));
-          
-          // Procesar los equipos con los mantenimientos ya cargados (sin actualizar Firestore)
-          const equiposConHistorial = equiposData.map(equipo => {
-            // Filtrar mantenimientos para este equipo
-            const historialEquipo = mantenimientos.filter(
-              m => m.equipoId === equipo.id
-            ).map(mantenimiento => ({
-              id: mantenimiento.id,
-              fecha: mantenimiento.fecha || new Date().toISOString().split('T')[0],
-              tipo: mantenimiento.tipo === 'preventivo' ? 'Preventivo' : 'Correctivo',
-              kilometraje: mantenimiento.kilometraje || 0,
-              descripcion: mantenimiento.descripcion || '',
-              repuestos: mantenimiento.repuestos || [],
-              mecanico: mantenimiento.mecanico || 'No asignado',
-              estado: mantenimiento.estado || 'pendiente'
-            }));
-            
-            // Ordenar por fecha más reciente primero
-            historialEquipo.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
-            
-            // No actualizar Firestore aquí, solo calcular el estado según el historial
-            const mantenimientoEnProceso = historialEquipo.find(m => m.estado === 'en_proceso');
-            let estadoEquipo = equipo.estado;
-            
-            if (mantenimientoEnProceso && equipo.estado === 'Operativo') {
-              estadoEquipo = 'En Mantenimiento';
-            } else if (!mantenimientoEnProceso && equipo.estado === 'En Mantenimiento') {
-              // Verificar si todos los mantenimientos están completados
-              const todoCompletado = !historialEquipo.some(m => m.estado === 'en_proceso' || m.estado === 'pendiente');
-              
-              if (todoCompletado) {
-                estadoEquipo = 'Operativo';
-              }
-            }
-            
-            // Calcular último y próximo mantenimiento
-            const mantenimientosCompletados = historialEquipo.filter(m => m.estado === 'completado');
-            let ultimoMantenimiento = equipo.ultimoMantenimiento;
-            let proximoMantenimiento = equipo.proximoMantenimiento;
-            
-            if (mantenimientosCompletados.length > 0) {
-              ultimoMantenimiento = mantenimientosCompletados[0].fecha;
-              
-              // Calcular próximo mantenimiento (2 meses después del último)
-              const fechaUltimo = new Date(mantenimientosCompletados[0].fecha);
-              fechaUltimo.setMonth(fechaUltimo.getMonth() + 2);
-              proximoMantenimiento = fechaUltimo.toISOString().split('T')[0];
-            }
-            
-            return {
-              ...equipo,
-              historial: historialEquipo,
-              ultimoMantenimiento,
-              proximoMantenimiento,
-              estado: estadoEquipo
-            };
+          const mantenimientosData = [];
+          mantenimientosSnap.forEach(doc => {
+            mantenimientosData.push({
+              id: doc.id,
+              ...doc.data()
+            });
           });
           
-          if (isMounted.current) {
-            setEquipos(equiposConHistorial);
-            setIsLoading(false);
-          }
+          setMantenimientos(mantenimientosData);
+          
+          // Una vez que tenemos los mantenimientos, cargar los equipos
+          // Este enfoque garantiza que tengamos los mantenimientos antes de procesar equipos
+          cargarEquipos();
         }, (error) => {
-          console.error("Error al escuchar cambios en equipos:", error);
+          console.error("Error al escuchar cambios en mantenimientos:", error);
           if (isMounted.current) {
-            setErrorMsg("Error al cargar los equipos. Intente nuevamente.");
+            setErrorMsg("Error al cargar los mantenimientos. Intente nuevamente.");
             setIsLoading(false);
           }
+          // Intentar cargar equipos de todos modos
+          cargarEquipos();
         });
+        
+        // Función para cargar equipos separada para mejorar legibilidad
+        const cargarEquipos = () => {
+          const equiposRef = collection(firestore, 'equipos');
+          const qEquipos = query(equiposRef, orderBy('numero', 'asc'));
+          
+          unsubscribeEquipos = onSnapshot(qEquipos, (equiposSnap) => {
+            if (!isMounted.current) return;
+            
+            // Comprobación de seguridad para confirmar que tenemos documentos
+            if (equiposSnap.empty) {
+              console.log("No hay equipos registrados");
+              setEquipos([]);
+              setIsLoading(false);
+              return;
+            }
+            
+            const equiposData = [];
+            equiposSnap.forEach(doc => {
+              const equipoData = doc.data();
+              equiposData.push({
+                id: doc.id,
+                ...equipoData,
+                // Valores por defecto para evitar problemas si faltan campos
+                numero: equipoData.numero || 'S/N',
+                modelo: equipoData.modelo || 'No especificado',
+                placa: equipoData.placa || 'Sin placa',
+                anio: equipoData.anio || new Date().getFullYear(),
+                kilometraje: equipoData.kilometraje || 0,
+                estado: equipoData.estado || 'Operativo',
+                historial: [] // Se llenará con mantenimientos
+              });
+            });
+            
+            // Procesar los equipos con los mantenimientos ya cargados
+            const equiposConHistorial = equiposData.map(equipo => {
+              // Filtrar mantenimientos para este equipo
+              const historialEquipo = mantenimientos.filter(
+                m => m.equipoId === equipo.id
+              ).map(mantenimiento => ({
+                id: mantenimiento.id,
+                fecha: mantenimiento.fecha || new Date().toISOString().split('T')[0],
+                tipo: mantenimiento.tipo === 'preventivo' ? 'Preventivo' : 'Correctivo',
+                kilometraje: mantenimiento.kilometraje || 0,
+                descripcion: mantenimiento.descripcion || '',
+                repuestos: mantenimiento.repuestos || [],
+                mecanico: mantenimiento.mecanico || 'No asignado',
+                estado: mantenimiento.estado || 'pendiente'
+              }));
+              
+              // Ordenar por fecha más reciente primero
+              historialEquipo.sort((a, b) => {
+                const dateA = new Date(a.fecha);
+                const dateB = new Date(b.fecha);
+                return dateB - dateA;
+              });
+              
+              // Calcular estado según el historial
+              const mantenimientoEnProceso = historialEquipo.find(m => m.estado === 'en_proceso');
+              let estadoEquipo = equipo.estado;
+              
+              if (mantenimientoEnProceso && equipo.estado === 'Operativo') {
+                estadoEquipo = 'En Mantenimiento';
+              } else if (!mantenimientoEnProceso && equipo.estado === 'En Mantenimiento') {
+                // Verificar si todos los mantenimientos están completados
+                const todoCompletado = !historialEquipo.some(
+                  m => m.estado === 'en_proceso' || m.estado === 'pendiente'
+                );
+                
+                if (todoCompletado) {
+                  estadoEquipo = 'Operativo';
+                }
+              }
+              
+              // Calcular último y próximo mantenimiento
+              const mantenimientosCompletados = historialEquipo.filter(m => m.estado === 'completado');
+              let ultimoMantenimiento = equipo.ultimoMantenimiento;
+              let proximoMantenimiento = equipo.proximoMantenimiento;
+              
+              if (mantenimientosCompletados.length > 0) {
+                ultimoMantenimiento = mantenimientosCompletados[0].fecha;
+                
+                // Calcular próximo mantenimiento (2 meses después del último)
+                const fechaUltimo = new Date(mantenimientosCompletados[0].fecha);
+                fechaUltimo.setMonth(fechaUltimo.getMonth() + 2);
+                proximoMantenimiento = fechaUltimo.toISOString().split('T')[0];
+              }
+              
+              return {
+                ...equipo,
+                historial: historialEquipo,
+                ultimoMantenimiento,
+                proximoMantenimiento,
+                estado: estadoEquipo
+              };
+            });
+            
+            if (isMounted.current) {
+              setEquipos(equiposConHistorial);
+              setIsLoading(false);
+            }
+          }, (error) => {
+            console.error("Error al escuchar cambios en equipos:", error);
+            if (isMounted.current) {
+              setErrorMsg("Error al cargar los equipos. Intente nuevamente.");
+              setIsLoading(false);
+            }
+          });
+        };
         
       } catch (error) {
         console.error("Error al cargar equipos:", error);
@@ -250,19 +290,18 @@ const EquiposScreen = ({ navigation }) => {
     };
   }, []);
 
-  // Efecto separado para actualizar el estado de los equipos en Firestore
-  // basado en sus mantenimientos (esto evita el ciclo infinito)
+  // Sincronizar estado de equipos con Firestore después de tener datos
   useEffect(() => {
     const actualizarEstadosEquipos = async () => {
-      // Solo si ya tenemos datos cargados
-      if (equipos.length === 0 || mantenimientos.length === 0) return;
+      // Solo ejecutar si tenemos datos
+      if (equipos.length === 0 || mantenimientos.length === 0 || isLoading) return;
       
       for (const equipo of equipos) {
         const mantenimientosEquipo = mantenimientos.filter(m => m.equipoId === equipo.id);
         const mantenimientoEnProceso = mantenimientosEquipo.find(m => m.estado === 'en_proceso');
         const todoCompletado = !mantenimientosEquipo.some(m => m.estado === 'en_proceso' || m.estado === 'pendiente');
         
-        // Solo actualizar en Firestore si realmente hay que cambiar el estado
+        // Solo actualizar si hay cambio de estado
         let debeActualizar = false;
         let nuevoEstado = equipo.estado;
         
@@ -281,6 +320,7 @@ const EquiposScreen = ({ navigation }) => {
               estado: nuevoEstado,
               fechaActualizacion: serverTimestamp()
             });
+            console.log(`Estado de equipo ${equipo.id} actualizado a ${nuevoEstado}`);
           } catch (error) {
             console.error(`Error al actualizar estado de equipo ${equipo.id}:`, error);
           }
@@ -288,17 +328,19 @@ const EquiposScreen = ({ navigation }) => {
       }
     };
     
-    // Solo ejecutar esta sincronización una vez después de cargar los datos
+    // Solo ejecutar una vez después de cargar
     if (!isLoading && equipos.length > 0) {
       actualizarEstadosEquipos();
     }
-  }, [isLoading, equipos.length]); // Se ejecuta solo cuando cambia isLoading o la longitud de equipos
+  }, [isLoading, equipos.length]);
 
-  // Filtrar equipos según término de búsqueda
+  // Filtrar equipos según búsqueda
   const equiposFiltrados = equipos.filter(equipo => {
+    if (!busqueda) return true;
+    
     const searchTerm = busqueda.toLowerCase();
     return (
-      (equipo.numero && equipo.numero.includes(searchTerm)) ||
+      (equipo.numero && equipo.numero.toString().includes(searchTerm)) ||
       (equipo.modelo && equipo.modelo.toLowerCase().includes(searchTerm)) ||
       (equipo.placa && equipo.placa.toLowerCase().includes(searchTerm)) ||
       (equipo.conductor && equipo.conductor.toLowerCase().includes(searchTerm))
@@ -586,6 +628,7 @@ const EquiposScreen = ({ navigation }) => {
     }
   };
 
+  // Pantalla de carga inicial
   if (isLoading && equipos.length === 0) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
@@ -597,6 +640,7 @@ const EquiposScreen = ({ navigation }) => {
 
   return (
     <Box sx={{ p: 3, position: 'relative' }}>
+      {/* Overlay de carga */}
       {isLoading && (
         <Box
           sx={{
@@ -616,6 +660,7 @@ const EquiposScreen = ({ navigation }) => {
         </Box>
       )}
       
+      {/* Encabezado */}
       <Box sx={{ 
         display: 'flex', 
         justifyContent: 'space-between', 
@@ -644,6 +689,7 @@ const EquiposScreen = ({ navigation }) => {
         </Button>
       </Box>
       
+      {/* Campo de búsqueda */}
       <Box sx={{ mb: 3 }}>
         <TextField
           fullWidth
@@ -661,6 +707,7 @@ const EquiposScreen = ({ navigation }) => {
         />
       </Box>
       
+      {/* Mensaje de error si hay */}
       {errorMsg && (
         <Collapse in={true}>
           <Alert 
@@ -677,6 +724,14 @@ const EquiposScreen = ({ navigation }) => {
         </Collapse>
       )}
       
+      {/* Debug - Mostrar conteo de equipos */}
+      {equipos.length === 0 && !isLoading && !errorMsg && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          No hay equipos registrados en la base de datos. Puede crear uno nuevo con el botón "Nuevo Equipo".
+        </Alert>
+      )}
+      
+      {/* Lista de equipos */}
       <Grid container spacing={3}>
         {equiposFiltrados.map((equipo) => (
           <Grid item xs={12} md={6} lg={4} key={equipo.id}>
@@ -705,31 +760,37 @@ const EquiposScreen = ({ navigation }) => {
                       size="small"
                       onClick={() => {
                         setEquipoSeleccionado(equipo);
-                        // Show action menu
+                        setFormEquipo({
+                          numero: equipo.numero,
+                          modelo: equipo.modelo || '',
+                          placa: equipo.placa || '',
+                          anio: (equipo.anio || new Date().getFullYear()).toString(),
+                          kilometraje: (equipo.kilometraje || 0).toString(),
+                          ultimoMantenimientoKm: (equipo.ultimoMantenimientoKm || 0).toString(),
+                          proximoMantenimientoKm: (equipo.proximoMantenimientoKm || 0).toString(),
+                          estado: equipo.estado || 'Operativo',
+                          conductor: equipo.conductor || ''
+                        });
+                        setEditarModalVisible(true);
                       }}
                     >
-                      <MoreVertIcon />
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                    <IconButton
+                      size="small"
+                      color="error"
+                      onClick={() => {
+                        setEquipoSeleccionado(equipo);
+                        setEliminarModalVisible(true);
+                      }}
+                    >
+                      <DeleteIcon fontSize="small" />
                     </IconButton>
                   </Box>
                 </Box>
                 
                 <Box mt={2}>
                   <Grid container spacing={2}>
-                    <Grid item xs={6}>
-                      <Typography variant="body2" color="textSecondary">
-                        <strong>Placa:</strong> {equipo.placa}
-                      </Typography>
-                    </Grid>
-                    <Grid item xs={6}>
-                      <Typography variant="body2" color="textSecondary">
-                        <strong>Año:</strong> {equipo.anio}
-                      </Typography>
-                    </Grid>
-                    <Grid item xs={6}>
-                      <Typography variant="body2" color="textSecondary">
-                        <strong>Conductor:</strong> {equipo.conductor || 'No asignado'}
-                      </Typography>
-                    </Grid>
                     <Grid item xs={6}>
                       <Typography variant="body2" color="textSecondary">
                         <strong>Kilometraje:</strong> {equipo.kilometraje?.toLocaleString() || 0} km
@@ -791,10 +852,10 @@ const EquiposScreen = ({ navigation }) => {
         ))}
       </Grid>
       
-      {equiposFiltrados.length === 0 && (
+      {equiposFiltrados.length === 0 && !isLoading && (
         <Box display="flex" flexDirection="column" alignItems="center" my={5}>
           <Typography variant="h6" color="textSecondary" gutterBottom>
-            No se encontraron equipos
+            {busqueda ? 'No se encontraron equipos que coincidan con la búsqueda' : 'No hay equipos registrados'}
           </Typography>
           <Button
             variant="contained"
@@ -1003,8 +1064,9 @@ const EquiposScreen = ({ navigation }) => {
           </Button>
         </DialogActions>
       </Dialog>
-       {/* Modal para ver historial */}
-       <Dialog
+      
+      {/* Modal para ver historial */}
+      <Dialog
         open={historialVisible}
         onClose={() => setHistorialVisible(false)}
         maxWidth="md"
@@ -1103,6 +1165,7 @@ const EquiposScreen = ({ navigation }) => {
           <Button onClick={() => setHistorialVisible(false)}>Cerrar</Button>
         </DialogActions>
       </Dialog>
+      
       {/* Modal para confirmar eliminación */}
       <Dialog
         open={eliminarModalVisible}
@@ -1142,5 +1205,4 @@ const EquiposScreen = ({ navigation }) => {
 };
 
 export default EquiposScreen;
-      
-     
+                      
