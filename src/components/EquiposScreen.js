@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   Button,
   TextField,
@@ -14,6 +14,7 @@ import {
   TableRow,
   Paper,
   IconButton,
+  Fab,
   Typography,
   Box,
   Select,
@@ -26,6 +27,7 @@ import {
   CardContent,
   CardActions,
   Chip,
+  Tooltip,
   Alert,
   Collapse,
   InputAdornment
@@ -55,7 +57,8 @@ import {
   orderBy,
   serverTimestamp,
   where,
-  onSnapshot
+  onSnapshot,
+  limit
 } from 'firebase/firestore';
 import firebaseApp from '../firebase/credenciales';
 
@@ -65,6 +68,8 @@ const firestore = getFirestore(firebaseApp);
 const EquiposScreen = ({ navigation }) => {
   // Estado para los equipos
   const [equipos, setEquipos] = useState([]);
+  const [mantenimientos, setMantenimientos] = useState([]);
+  const [conductores, setConductores] = useState([]);
   const [busqueda, setBusqueda] = useState('');
   const [equipoSeleccionado, setEquipoSeleccionado] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
@@ -75,8 +80,6 @@ const EquiposScreen = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
   const [nuevoKilometraje, setNuevoKilometraje] = useState('');
-  const [conductores, setConductores] = useState([]);
-  const [mantenimientos, setMantenimientos] = useState([]);
   const [formEquipo, setFormEquipo] = useState({
     numero: '',
     modelo: '',
@@ -88,191 +91,104 @@ const EquiposScreen = ({ navigation }) => {
     estado: 'Operativo'
   });
   
-  // Ref to track component mount state
+  // Refs para controlar el estado de montaje y carga
   const isMounted = useRef(true);
+  const isInitialLoad = useRef(true);
+  const loadTimeoutRef = useRef(null);
 
-  // Cargar datos desde Firebase
+  // Función para cargar conductores - simplificada
+  const cargarConductores = useCallback(async () => {
+    if (!isMounted.current) return [];
+    
+    try {
+      const conductoresRef = collection(firestore, 'usuarios');
+      const qConductores = query(
+        conductoresRef,
+        where('rol', '==', 'conductor')
+      );
+      
+      const conductoresSnap = await getDocs(qConductores);
+      const conductoresData = [];
+      
+      conductoresSnap.forEach((docSnap) => {
+        const conductor = docSnap.data();
+        conductoresData.push({
+          id: docSnap.id,
+          nombre: conductor.nombre || conductor.correo || 'Sin nombre',
+          correo: conductor.correo || ''
+        });
+      });
+      
+      if (isMounted.current) {
+        setConductores(conductoresData);
+      }
+      return conductoresData;
+    } catch (error) {
+      console.error("Error al cargar conductores:", error);
+      return [];
+    }
+  }, []);
+
+  // Cargar datos - Simplificado para evitar errores
   useEffect(() => {
-    let unsubscribeEquipos = null;
-    let unsubscribeMantenimientos = null;
-
+    console.log('Iniciando carga de datos...');
+    setIsLoading(true);
+    
+    // Safety timeout: si después de 10 segundos no ha cargado, mostrar interfaz
+    loadTimeoutRef.current = setTimeout(() => {
+      if (isMounted.current && isLoading) {
+        console.log('Timeout de carga activado, mostrando UI...');
+        setIsLoading(false);
+      }
+    }, 10000);
+    
+    // Función simplificada para cargar datos
     const cargarDatos = async () => {
       try {
-        if (isMounted.current) {
-          setIsLoading(true);
-          setErrorMsg(null);
-        }
-
-        // 1. Cargar conductores
-        const cargarConductores = async () => {
-          try {
-            const conductoresRef = collection(firestore, 'usuarios');
-            const qConductores = query(
-              conductoresRef,
-              where('rol', '==', 'conductor')
-            );
-            
-            const conductoresSnap = await getDocs(qConductores);
-            const conductoresData = [];
-            
-            conductoresSnap.forEach((docSnap) => {
-              const conductor = docSnap.data();
-              conductoresData.push({
-                id: docSnap.id,
-                nombre: conductor.nombre || conductor.correo || 'Sin nombre',
-                correo: conductor.correo || ''
-              });
-            });
-            
-            if (isMounted.current) {
-              setConductores(conductoresData);
-            }
-          } catch (error) {
-            console.error("Error al cargar conductores:", error);
-          }
-        };
-
-        await cargarConductores();
+        // 1. Cargar equipos básicos primero (solo necesitamos los datos mínimos para mostrar)
+        const equiposRef = collection(firestore, 'equipos');
+        const qEquiposBasicos = query(equiposRef, orderBy('numero', 'asc'));
         
-        // 2. Suscribirse a cambios en mantenimientos
+        const equiposSnap = await getDocs(qEquiposBasicos);
+        if (!isMounted.current) return;
+        
+        // 2. Transformar datos y actualizar estado inmediatamente para mostrar UI
+        const equiposData = equiposSnap.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          historial: [] // Inicializado vacío, lo cargaremos después
+        }));
+        
+        // Actualizar estado y desactivar carga
+        setEquipos(equiposData);
+        setIsLoading(false);
+        
+        // 3. Cargar datos adicionales en segundo plano
+        cargarConductores();
+        
+        // 4. Cargar mantenimientos en segundo plano (limitados para mejor rendimiento)
         const mantenimientosRef = collection(firestore, 'mantenimientos');
-        unsubscribeMantenimientos = onSnapshot(mantenimientosRef, (mantenimientosSnap) => {
-          if (!isMounted.current) return;
-          
-          const mantenimientosData = [];
-          mantenimientosSnap.forEach(doc => {
-            mantenimientosData.push({
-              id: doc.id,
-              ...doc.data()
-            });
-          });
-          
-          setMantenimientos(mantenimientosData);
-          
-          // Una vez que tenemos los mantenimientos, cargar los equipos
-          // Este enfoque garantiza que tengamos los mantenimientos antes de procesar equipos
-          cargarEquipos();
-        }, (error) => {
-          console.error("Error al escuchar cambios en mantenimientos:", error);
-          if (isMounted.current) {
-            setErrorMsg("Error al cargar los mantenimientos. Intente nuevamente.");
-            setIsLoading(false);
-          }
-          // Intentar cargar equipos de todos modos
-          cargarEquipos();
-        });
+        const qMantenimientos = query(mantenimientosRef, limit(50)); // Limitamos a 50 por rendimiento
         
-        // Función para cargar equipos separada para mejorar legibilidad
-        const cargarEquipos = () => {
-          const equiposRef = collection(firestore, 'equipos');
-          const qEquipos = query(equiposRef, orderBy('numero', 'asc'));
-          
-          unsubscribeEquipos = onSnapshot(qEquipos, (equiposSnap) => {
-            if (!isMounted.current) return;
-            
-            // Comprobación de seguridad para confirmar que tenemos documentos
-            if (equiposSnap.empty) {
-              console.log("No hay equipos registrados");
-              setEquipos([]);
-              setIsLoading(false);
-              return;
-            }
-            
-            const equiposData = [];
-            equiposSnap.forEach(doc => {
-              const equipoData = doc.data();
-              equiposData.push({
-                id: doc.id,
-                ...equipoData,
-                // Valores por defecto para evitar problemas si faltan campos
-                numero: equipoData.numero || 'S/N',
-                modelo: equipoData.modelo || 'No especificado',
-                placa: equipoData.placa || 'Sin placa',
-                anio: equipoData.anio || new Date().getFullYear(),
-                kilometraje: equipoData.kilometraje || 0,
-                estado: equipoData.estado || 'Operativo',
-                historial: [] // Se llenará con mantenimientos
-              });
-            });
-            
-            // Procesar los equipos con los mantenimientos ya cargados
-            const equiposConHistorial = equiposData.map(equipo => {
-              // Filtrar mantenimientos para este equipo
-              const historialEquipo = mantenimientos.filter(
-                m => m.equipoId === equipo.id
-              ).map(mantenimiento => ({
-                id: mantenimiento.id,
-                fecha: mantenimiento.fecha || new Date().toISOString().split('T')[0],
-                tipo: mantenimiento.tipo === 'preventivo' ? 'Preventivo' : 'Correctivo',
-                kilometraje: mantenimiento.kilometraje || 0,
-                descripcion: mantenimiento.descripcion || '',
-                repuestos: mantenimiento.repuestos || [],
-                mecanico: mantenimiento.mecanico || 'No asignado',
-                estado: mantenimiento.estado || 'pendiente'
-              }));
-              
-              // Ordenar por fecha más reciente primero
-              historialEquipo.sort((a, b) => {
-                const dateA = new Date(a.fecha);
-                const dateB = new Date(b.fecha);
-                return dateB - dateA;
-              });
-              
-              // Calcular estado según el historial
-              const mantenimientoEnProceso = historialEquipo.find(m => m.estado === 'en_proceso');
-              let estadoEquipo = equipo.estado;
-              
-              if (mantenimientoEnProceso && equipo.estado === 'Operativo') {
-                estadoEquipo = 'En Mantenimiento';
-              } else if (!mantenimientoEnProceso && equipo.estado === 'En Mantenimiento') {
-                // Verificar si todos los mantenimientos están completados
-                const todoCompletado = !historialEquipo.some(
-                  m => m.estado === 'en_proceso' || m.estado === 'pendiente'
-                );
-                
-                if (todoCompletado) {
-                  estadoEquipo = 'Operativo';
-                }
-              }
-              
-              // Calcular último y próximo mantenimiento
-              const mantenimientosCompletados = historialEquipo.filter(m => m.estado === 'completado');
-              let ultimoMantenimiento = equipo.ultimoMantenimiento;
-              let proximoMantenimiento = equipo.proximoMantenimiento;
-              
-              if (mantenimientosCompletados.length > 0) {
-                ultimoMantenimiento = mantenimientosCompletados[0].fecha;
-                
-                // Calcular próximo mantenimiento (2 meses después del último)
-                const fechaUltimo = new Date(mantenimientosCompletados[0].fecha);
-                fechaUltimo.setMonth(fechaUltimo.getMonth() + 2);
-                proximoMantenimiento = fechaUltimo.toISOString().split('T')[0];
-              }
-              
-              return {
-                ...equipo,
-                historial: historialEquipo,
-                ultimoMantenimiento,
-                proximoMantenimiento,
-                estado: estadoEquipo
-              };
-            });
-            
-            if (isMounted.current) {
-              setEquipos(equiposConHistorial);
-              setIsLoading(false);
-            }
-          }, (error) => {
-            console.error("Error al escuchar cambios en equipos:", error);
-            if (isMounted.current) {
-              setErrorMsg("Error al cargar los equipos. Intente nuevamente.");
-              setIsLoading(false);
-            }
-          });
-        };
+        const mantenimientosSnap = await getDocs(qMantenimientos);
+        if (!isMounted.current) return;
         
+        const mantenimientosData = mantenimientosSnap.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        
+        setMantenimientos(mantenimientosData);
+        
+        // 5. Procesar historial después de tener mantenimientos
+        if (isMounted.current && equiposData.length > 0) {
+          procesarHistorialEquipos(equiposData, mantenimientosData);
+        }
+        
+        // Desactivar la carga inicial
+        isInitialLoad.current = false;
       } catch (error) {
-        console.error("Error al cargar equipos:", error);
+        console.error("Error al cargar datos:", error);
         if (isMounted.current) {
           setErrorMsg("Error al cargar los equipos. Intente nuevamente.");
           setIsLoading(false);
@@ -280,72 +196,82 @@ const EquiposScreen = ({ navigation }) => {
       }
     };
     
+    // Ejecutar la carga de datos
     cargarDatos();
     
-    // Limpiar suscripciones al desmontar
+    // Limpiar
     return () => {
       isMounted.current = false;
-      if (unsubscribeEquipos) unsubscribeEquipos();
-      if (unsubscribeMantenimientos) unsubscribeMantenimientos();
+      clearTimeout(loadTimeoutRef.current);
     };
+  }, []); // Solo ejecutar en montaje
+  
+  // Función simplificada para procesar historial
+  const procesarHistorialEquipos = useCallback((equiposData, mantenimientosData) => {
+    if (!isMounted.current) return;
+    
+    try {
+      const equiposActualizados = equiposData.map(equipo => {
+        // Solo procesar si hay mantenimientos para este equipo (optimización)
+        const mantenimientosEquipo = mantenimientosData.filter(m => m.equipoId === equipo.id);
+        if (mantenimientosEquipo.length === 0) return equipo;
+        
+        // Procesamiento del historial para este equipo
+        const historialEquipo = mantenimientosEquipo.map(mantenimiento => ({
+          id: mantenimiento.id,
+          fecha: mantenimiento.fecha || new Date().toISOString().split('T')[0],
+          tipo: mantenimiento.tipo === 'preventivo' ? 'Preventivo' : 'Correctivo',
+          kilometraje: mantenimiento.kilometraje || 0,
+          descripcion: mantenimiento.descripcion || '',
+          repuestos: mantenimiento.repuestos || [],
+          mecanico: mantenimiento.mecanico || 'No asignado',
+          estado: mantenimiento.estado || 'pendiente'
+        }));
+        
+        // Ordenar por fecha más reciente
+        historialEquipo.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+        
+        // Determinar estado basado en mantenimientos
+        const mantenimientoEnProceso = historialEquipo.find(m => m.estado === 'en_proceso');
+        const todoCompletado = !historialEquipo.some(m => m.estado === 'en_proceso' || m.estado === 'pendiente');
+        
+        let estadoEquipo = equipo.estado;
+        
+        // Actualizar estado solo si es necesario
+        if (mantenimientoEnProceso && equipo.estado === 'Operativo') {
+          estadoEquipo = 'En Mantenimiento';
+        } else if (!mantenimientoEnProceso && equipo.estado === 'En Mantenimiento' && todoCompletado) {
+          estadoEquipo = 'Operativo';
+        }
+        
+        return {
+          ...equipo,
+          historial: historialEquipo,
+          estado: estadoEquipo
+        };
+      });
+      
+      setEquipos(equiposActualizados);
+    } catch (error) {
+      console.error("Error al procesar historial:", error);
+    }
   }, []);
 
-  // Sincronizar estado de equipos con Firestore después de tener datos
-  useEffect(() => {
-    const actualizarEstadosEquipos = async () => {
-      // Solo ejecutar si tenemos datos
-      if (equipos.length === 0 || mantenimientos.length === 0 || isLoading) return;
-      
-      for (const equipo of equipos) {
-        const mantenimientosEquipo = mantenimientos.filter(m => m.equipoId === equipo.id);
-        const mantenimientoEnProceso = mantenimientosEquipo.find(m => m.estado === 'en_proceso');
-        const todoCompletado = !mantenimientosEquipo.some(m => m.estado === 'en_proceso' || m.estado === 'pendiente');
-        
-        // Solo actualizar si hay cambio de estado
-        let debeActualizar = false;
-        let nuevoEstado = equipo.estado;
-        
-        if (mantenimientoEnProceso && equipo.estado === 'Operativo') {
-          nuevoEstado = 'En Mantenimiento';
-          debeActualizar = true;
-        } else if (!mantenimientoEnProceso && equipo.estado === 'En Mantenimiento' && todoCompletado) {
-          nuevoEstado = 'Operativo';
-          debeActualizar = true;
-        }
-        
-        if (debeActualizar) {
-          try {
-            const equipoRef = doc(firestore, 'equipos', equipo.id);
-            await updateDoc(equipoRef, {
-              estado: nuevoEstado,
-              fechaActualizacion: serverTimestamp()
-            });
-            console.log(`Estado de equipo ${equipo.id} actualizado a ${nuevoEstado}`);
-          } catch (error) {
-            console.error(`Error al actualizar estado de equipo ${equipo.id}:`, error);
-          }
-        }
-      }
-    };
-    
-    // Solo ejecutar una vez después de cargar
-    if (!isLoading && equipos.length > 0) {
-      actualizarEstadosEquipos();
+  // Memoización para filtrar equipos
+  const equiposFiltrados = useMemo(() => {
+    try {
+      const searchTerm = busqueda.toLowerCase();
+      return equipos.filter(equipo => (
+        (equipo.numero && equipo.numero.includes(searchTerm)) ||
+        (equipo.modelo && equipo.modelo.toLowerCase().includes(searchTerm)) ||
+        (equipo.placa && equipo.placa.toLowerCase().includes(searchTerm)) ||
+        (equipo.conductor && equipo.conductor.toLowerCase().includes(searchTerm))
+      ));
+    } catch (error) {
+      console.error("Error al filtrar equipos:", error);
+      return equipos;
     }
-  }, [isLoading, equipos.length]);
-
-  // Filtrar equipos según búsqueda
-  const equiposFiltrados = equipos.filter(equipo => {
-    if (!busqueda) return true;
-    
-    const searchTerm = busqueda.toLowerCase();
-    return (
-      (equipo.numero && equipo.numero.toString().includes(searchTerm)) ||
-      (equipo.modelo && equipo.modelo.toLowerCase().includes(searchTerm)) ||
-      (equipo.placa && equipo.placa.toLowerCase().includes(searchTerm)) ||
-      (equipo.conductor && equipo.conductor.toLowerCase().includes(searchTerm))
-    );
-  });
+  }, [equipos, busqueda]);
 
   // Función para crear un nuevo equipo
   const handleCrearEquipo = async () => {
@@ -495,7 +421,7 @@ const EquiposScreen = ({ navigation }) => {
     }
   };
 
-  // Función para eliminar un equipo
+  // Función para eliminar un equipo - optimizada
   const handleEliminarEquipo = async () => {
     try {
       if (!equipoSeleccionado) {
@@ -509,7 +435,8 @@ const EquiposScreen = ({ navigation }) => {
       const mantenimientosRef = collection(firestore, 'mantenimientos');
       const qMantenimientos = query(
         mantenimientosRef,
-        where('equipoId', '==', equipoSeleccionado.id)
+        where('equipoId', '==', equipoSeleccionado.id),
+        limit(1) // Solo necesitamos saber si hay al menos uno
       );
       
       const mantenimientosSnap = await getDocs(qMantenimientos);
@@ -544,6 +471,7 @@ const EquiposScreen = ({ navigation }) => {
       
       const mantenimientosSnap = await getDocs(qMantenimientos);
       
+      // Eliminar todos los mantenimientos asociados en paralelo
       const eliminarMantenimientos = mantenimientosSnap.docs.map(doc => 
         deleteDoc(doc.ref)
       );
@@ -575,6 +503,11 @@ const EquiposScreen = ({ navigation }) => {
       }
       
       const equipoActual = equipos.find(e => e.id === id);
+      if (!equipoActual) {
+        alert("Equipo no encontrado");
+        return;
+      }
+      
       if (kmNum < equipoActual.kilometraje) {
         alert("El nuevo kilometraje debe ser mayor al actual");
         return;
@@ -596,13 +529,12 @@ const EquiposScreen = ({ navigation }) => {
       alert("Kilometraje actualizado correctamente");
       
       // Verificar si se debe programar un mantenimiento
-      const equipo = equipos.find(e => e.id === id);
-      if (equipo && equipo.proximoMantenimientoKm && kmNum >= equipo.proximoMantenimientoKm) {
+      if (equipoActual && equipoActual.proximoMantenimientoKm && kmNum >= equipoActual.proximoMantenimientoKm) {
         if (window.confirm("El equipo ha alcanzado el kilometraje para mantenimiento preventivo. ¿Desea programar un mantenimiento?")) {
           // Navigate to maintenance screen
           navigation?.navigate?.('MantencionScreen', {
             equipoId: id,
-            equipoNumero: equipo.numero,
+            equipoNumero: equipoActual.numero,
             kilometraje: kmNum.toString()
           });
         }
@@ -614,8 +546,8 @@ const EquiposScreen = ({ navigation }) => {
     }
   };
 
-  // Función para obtener el color del estado
-  const getEstadoColor = (estado) => {
+  // Memoizar función para obtener color del estado
+  const getEstadoColor = useCallback((estado) => {
     switch (estado) {
       case 'Operativo':
         return '#52C41A';
@@ -626,21 +558,79 @@ const EquiposScreen = ({ navigation }) => {
       default:
         return '#999';
     }
-  };
+  }, []);
 
-  // Pantalla de carga inicial
+  // Función para forzar recarga
+  const handleForceReload = () => {
+    setIsLoading(true);
+    
+    // Recargar datos básicos rápidamente
+    const cargarBasico = async () => {
+      try {
+        const equiposRef = collection(firestore, 'equipos');
+        const qEquipos = query(equiposRef, orderBy('numero', 'asc'));
+        
+        const equiposSnap = await getDocs(qEquipos);
+        
+        const equiposData = equiposSnap.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          historial: []
+        }));
+        
+        setEquipos(equiposData);
+        setIsLoading(false);
+        
+        // Cargar el resto en segundo plano
+        setTimeout(() => {
+          cargarConductores();
+          
+          // Recargar mantenimientos
+          const recargarMantenimientos = async () => {
+            const mantenimientosRef = collection(firestore, 'mantenimientos');
+            const mantenimientosSnap = await getDocs(mantenimientosRef);
+            
+            const mantenimientosData = mantenimientosSnap.docs.map(doc => ({
+              id: doc.id,
+              ...doc.data()
+            }));
+            
+            setMantenimientos(mantenimientosData);
+            procesarHistorialEquipos(equiposData, mantenimientosData);
+          };
+          
+          recargarMantenimientos();
+        }, 500);
+      } catch (error) {
+        console.error("Error al recargar datos:", error);
+        setIsLoading(false);
+        setErrorMsg("Error al recargar los equipos. Intente nuevamente.");
+      }
+    };
+    
+    cargarBasico();
+  };
+  
+  // Pantalla de carga
   if (isLoading && equipos.length === 0) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
-        <CircularProgress />
-        <Typography sx={{ ml: 2 }}>Cargando equipos...</Typography>
+      <Box display="flex" flexDirection="column" justifyContent="center" alignItems="center" minHeight="100vh">
+        <CircularProgress size={60} />
+        <Typography sx={{ mt: 2, mb: 1 }}>Cargando equipos...</Typography>
+        <Button 
+          variant="outlined" 
+          onClick={handleForceReload}
+          startIcon={<RefreshIcon />}
+          sx={{ mt: 2 }}
+        >
+          Forzar recarga
+        </Button>
       </Box>
     );
   }
 
   return (
     <Box sx={{ p: 3, position: 'relative' }}>
-      {/* Overlay de carga */}
       {isLoading && (
         <Box
           sx={{
@@ -660,7 +650,6 @@ const EquiposScreen = ({ navigation }) => {
         </Box>
       )}
       
-      {/* Encabezado */}
       <Box sx={{ 
         display: 'flex', 
         justifyContent: 'space-between', 
@@ -668,28 +657,38 @@ const EquiposScreen = ({ navigation }) => {
         mb: 3 
       }}>
         <Typography variant="h4">Equipos</Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => {
-            setFormEquipo({
-              numero: '',
-              modelo: '',
-              placa: '',
-              anio: new Date().getFullYear().toString(),
-              kilometraje: '',
-              ultimoMantenimientoKm: '',
-              proximoMantenimientoKm: '',
-              estado: 'Operativo'
-            });
-            setCrearModalVisible(true);
-          }}
-        >
-          Nuevo Equipo
-        </Button>
+        <Box>
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={handleForceReload}
+            sx={{ mr: 1 }}
+            disabled={isLoading}
+          >
+            Recargar
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => {
+              setFormEquipo({
+                numero: '',
+                modelo: '',
+                placa: '',
+                anio: new Date().getFullYear().toString(),
+                kilometraje: '',
+                ultimoMantenimientoKm: '',
+                proximoMantenimientoKm: '',
+                estado: 'Operativo'
+              });
+              setCrearModalVisible(true);
+            }}
+          >
+            Nuevo Equipo
+          </Button>
+        </Box>
       </Box>
       
-      {/* Campo de búsqueda */}
       <Box sx={{ mb: 3 }}>
         <TextField
           fullWidth
@@ -707,14 +706,13 @@ const EquiposScreen = ({ navigation }) => {
         />
       </Box>
       
-      {/* Mensaje de error si hay */}
       {errorMsg && (
         <Collapse in={true}>
           <Alert 
             severity="error" 
             sx={{ mb: 2 }}
             action={
-              <Button color="inherit" size="small" onClick={() => window.location.reload()}>
+              <Button color="inherit" size="small" onClick={handleForceReload}>
                 Recargar
               </Button>
             }
@@ -724,14 +722,6 @@ const EquiposScreen = ({ navigation }) => {
         </Collapse>
       )}
       
-      {/* Debug - Mostrar conteo de equipos */}
-      {equipos.length === 0 && !isLoading && !errorMsg && (
-        <Alert severity="info" sx={{ mb: 2 }}>
-          No hay equipos registrados en la base de datos. Puede crear uno nuevo con el botón "Nuevo Equipo".
-        </Alert>
-      )}
-      
-      {/* Lista de equipos */}
       <Grid container spacing={3}>
         {equiposFiltrados.map((equipo) => (
           <Grid item xs={12} md={6} lg={4} key={equipo.id}>
@@ -761,13 +751,13 @@ const EquiposScreen = ({ navigation }) => {
                       onClick={() => {
                         setEquipoSeleccionado(equipo);
                         setFormEquipo({
-                          numero: equipo.numero,
+                          numero: equipo.numero || '',
                           modelo: equipo.modelo || '',
                           placa: equipo.placa || '',
-                          anio: (equipo.anio || new Date().getFullYear()).toString(),
-                          kilometraje: (equipo.kilometraje || 0).toString(),
-                          ultimoMantenimientoKm: (equipo.ultimoMantenimientoKm || 0).toString(),
-                          proximoMantenimientoKm: (equipo.proximoMantenimientoKm || 0).toString(),
+                          anio: equipo.anio?.toString() || new Date().getFullYear().toString(),
+                          kilometraje: equipo.kilometraje?.toString() || '',
+                          ultimoMantenimientoKm: equipo.ultimoMantenimientoKm?.toString() || '',
+                          proximoMantenimientoKm: equipo.proximoMantenimientoKm?.toString() || '',
                           estado: equipo.estado || 'Operativo',
                           conductor: equipo.conductor || ''
                         });
@@ -776,21 +766,26 @@ const EquiposScreen = ({ navigation }) => {
                     >
                       <EditIcon fontSize="small" />
                     </IconButton>
-                    <IconButton
-                      size="small"
-                      color="error"
-                      onClick={() => {
-                        setEquipoSeleccionado(equipo);
-                        setEliminarModalVisible(true);
-                      }}
-                    >
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
                   </Box>
                 </Box>
                 
                 <Box mt={2}>
                   <Grid container spacing={2}>
+                    <Grid item xs={6}>
+                      <Typography variant="body2" color="textSecondary">
+                        <strong>Placa:</strong> {equipo.placa}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Typography variant="body2" color="textSecondary">
+                        <strong>Año:</strong> {equipo.anio}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Typography variant="body2" color="textSecondary">
+                        <strong>Conductor:</strong> {equipo.conductor || 'No asignado'}
+                      </Typography>
+                    </Grid>
                     <Grid item xs={6}>
                       <Typography variant="body2" color="textSecondary">
                         <strong>Kilometraje:</strong> {equipo.kilometraje?.toLocaleString() || 0} km
@@ -811,17 +806,17 @@ const EquiposScreen = ({ navigation }) => {
               </CardContent>
               
               <CardActions>
-                <Button 
-                  size="small"
-                  startIcon={<SpeedIcon />}
-                  onClick={() => {
-                    setEquipoSeleccionado(equipo);
-                    setNuevoKilometraje('');
-                    setModalVisible(true);
-                  }}
-                >
-                  KM
-                </Button>
+              <Button 
+                size="small"
+                startIcon={<SpeedIcon />}
+                onClick={() => {
+                  setEquipoSeleccionado(equipo);
+                  setNuevoKilometraje('');
+                  setModalVisible(true);
+                }}
+              >
+                KM
+              </Button>
                 <Button 
                   size="small"
                   startIcon={<HistoryIcon />}
@@ -840,12 +835,22 @@ const EquiposScreen = ({ navigation }) => {
                     navigation?.navigate?.('MantencionScreen', {
                       equipoId: equipo.id,
                       equipoNumero: equipo.numero,
-                      kilometraje: equipo.kilometraje.toString()
+                      kilometraje: equipo.kilometraje?.toString() || '0'
                     });
                   }}
                 >
-                  Mantenimiento
+                  
                 </Button>
+                <IconButton 
+                  size="small" 
+                  color="error"
+                  onClick={() => {
+                    setEquipoSeleccionado(equipo);
+                    setEliminarModalVisible(true);
+                  }}
+                >
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
               </CardActions>
             </Card>
           </Grid>
@@ -855,7 +860,7 @@ const EquiposScreen = ({ navigation }) => {
       {equiposFiltrados.length === 0 && !isLoading && (
         <Box display="flex" flexDirection="column" alignItems="center" my={5}>
           <Typography variant="h6" color="textSecondary" gutterBottom>
-            {busqueda ? 'No se encontraron equipos que coincidan con la búsqueda' : 'No hay equipos registrados'}
+            {busqueda ? 'No se encontraron equipos con esa búsqueda' : 'No hay equipos registrados'}
           </Typography>
           <Button
             variant="contained"
@@ -1205,4 +1210,3 @@ const EquiposScreen = ({ navigation }) => {
 };
 
 export default EquiposScreen;
-                      

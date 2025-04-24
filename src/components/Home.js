@@ -149,11 +149,18 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
             return item.cantidad <= item.minimo;
           }).length;
           
+          // MODIFICADO: Compara el stock con el minimo para cada repuesto
           const repuestosRef = collection(firestore, 'repuestos');
-          const repuestosQuery = query(repuestosRef, where('stock', '<', 5));
-          const repuestosSnapshot = await getDocs(repuestosQuery);
+          const repuestosSnapshot = await getDocs(repuestosRef);
+          const repuestosBajosStock = repuestosSnapshot.docs.filter(doc => {
+            const repuesto = doc.data();
+            // Compara el stock con el minimo específico de cada repuesto
+            return repuesto.stock !== undefined && 
+                   repuesto.minimo !== undefined && 
+                   repuesto.stock < repuesto.minimo;
+          }).length;
           
-          inventarioBajo = itemsBajosInventario + repuestosSnapshot.size;
+          inventarioBajo = itemsBajosInventario + repuestosBajosStock;
         } catch (error) {
           console.error("Error al cargar inventario:", error);
           inventarioBajo = 0;
