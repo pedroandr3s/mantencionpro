@@ -74,6 +74,7 @@ const EquiposScreen = ({ navigation }) => {
   const [equipoSeleccionado, setEquipoSeleccionado] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [historialVisible, setHistorialVisible] = useState(false);
+  const [historialMantenimientos, setHistorialMantenimientos] = useState([]);
   const [crearModalVisible, setCrearModalVisible] = useState(false);
   const [editarModalVisible, setEditarModalVisible] = useState(false);
   const [eliminarModalVisible, setEliminarModalVisible] = useState(false);
@@ -129,10 +130,66 @@ const EquiposScreen = ({ navigation }) => {
     }
   }, []);
 
-  // Cargar datos - Simplificado para evitar errores
-  useEffect(() => {
-    console.log('Iniciando carga de datos...');
+  // Función para cargar datos completa que se ejecuta al montar y al forzar recarga
+  const cargarDatosCompletos = useCallback(async () => {
+    console.log('Iniciando carga de datos completa...');
     setIsLoading(true);
+    setErrorMsg(null);
+    
+    try {
+      // 1. Cargar equipos básicos primero
+      const equiposRef = collection(firestore, 'equipos');
+      const qEquiposBasicos = query(equiposRef, orderBy('numero', 'asc'));
+      
+      const equiposSnap = await getDocs(qEquiposBasicos);
+      if (!isMounted.current) return;
+      
+      // 2. Transformar datos y actualizar estado inmediatamente para mostrar UI
+      const equiposData = equiposSnap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        historial: [] // Inicializado vacío, lo cargaremos después
+      }));
+      
+      // Actualizar estado y desactivar carga
+      setEquipos(equiposData);
+      
+      // 3. Cargar datos adicionales en segundo plano
+      cargarConductores();
+      
+      // 4. Cargar TODOS los mantenimientos para asegurar que tengamos el historial completo
+      const mantenimientosRef = collection(firestore, 'mantenimientos');
+      const mantenimientosSnap = await getDocs(mantenimientosRef);
+      if (!isMounted.current) return;
+      
+      const mantenimientosData = mantenimientosSnap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      setMantenimientos(mantenimientosData);
+      
+      // 5. Procesar historial después de tener mantenimientos
+      if (isMounted.current && equiposData.length > 0) {
+        procesarHistorialEquipos(equiposData, mantenimientosData);
+      }
+      
+      // Desactivar la carga inicial
+      isInitialLoad.current = false;
+      setIsLoading(false);
+      
+    } catch (error) {
+      console.error("Error al cargar datos completos:", error);
+      if (isMounted.current) {
+        setErrorMsg("Error al cargar los equipos. Intente nuevamente.");
+        setIsLoading(false);
+      }
+    }
+  }, [cargarConductores]);
+
+  // Cargar datos al montar el componente y forzar recarga inmediata
+  useEffect(() => {
+    console.log('Iniciando carga de datos al montar componente...');
     
     // Safety timeout: si después de 10 segundos no ha cargado, mostrar interfaz
     loadTimeoutRef.current = setTimeout(() => {
@@ -142,62 +199,8 @@ const EquiposScreen = ({ navigation }) => {
       }
     }, 10000);
     
-    // Función simplificada para cargar datos
-    const cargarDatos = async () => {
-      try {
-        // 1. Cargar equipos básicos primero (solo necesitamos los datos mínimos para mostrar)
-        const equiposRef = collection(firestore, 'equipos');
-        const qEquiposBasicos = query(equiposRef, orderBy('numero', 'asc'));
-        
-        const equiposSnap = await getDocs(qEquiposBasicos);
-        if (!isMounted.current) return;
-        
-        // 2. Transformar datos y actualizar estado inmediatamente para mostrar UI
-        const equiposData = equiposSnap.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          historial: [] // Inicializado vacío, lo cargaremos después
-        }));
-        
-        // Actualizar estado y desactivar carga
-        setEquipos(equiposData);
-        setIsLoading(false);
-        
-        // 3. Cargar datos adicionales en segundo plano
-        cargarConductores();
-        
-        // 4. Cargar mantenimientos en segundo plano (limitados para mejor rendimiento)
-        const mantenimientosRef = collection(firestore, 'mantenimientos');
-        const qMantenimientos = query(mantenimientosRef, limit(50)); // Limitamos a 50 por rendimiento
-        
-        const mantenimientosSnap = await getDocs(qMantenimientos);
-        if (!isMounted.current) return;
-        
-        const mantenimientosData = mantenimientosSnap.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        
-        setMantenimientos(mantenimientosData);
-        
-        // 5. Procesar historial después de tener mantenimientos
-        if (isMounted.current && equiposData.length > 0) {
-          procesarHistorialEquipos(equiposData, mantenimientosData);
-        }
-        
-        // Desactivar la carga inicial
-        isInitialLoad.current = false;
-      } catch (error) {
-        console.error("Error al cargar datos:", error);
-        if (isMounted.current) {
-          setErrorMsg("Error al cargar los equipos. Intente nuevamente.");
-          setIsLoading(false);
-        }
-      }
-    };
-    
-    // Ejecutar la carga de datos
-    cargarDatos();
+    // Ejecutar carga de datos completa inmediatamente
+    cargarDatosCompletos();
     
     // Limpiar
     return () => {
@@ -206,6 +209,75 @@ const EquiposScreen = ({ navigation }) => {
     };
   }, []); // Solo ejecutar en montaje
   
+  // Función para cargar los mantenimientos específicos de un equipo cuando se abre el historial
+  const cargarMantenimientosEquipo = useCallback(async (equipoId, equipoNumero) => {
+    setIsLoading(true);
+    try {
+      console.log(`Cargando mantenimientos para equipo ID: ${equipoId}, Número: ${equipoNumero}`);
+      
+      // Consulta por equipoId (método principal)
+      const mantenimientosRef = collection(firestore, 'mantenimientos');
+      const qMantenimientosId = query(
+        mantenimientosRef,
+        where('equipoId', '==', equipoId)
+      );
+      
+      // Consulta alternativa por número de equipo en caso de que algunos registros usen este método
+      const qMantenimientosNumero = query(
+        mantenimientosRef,
+        where('equipo', '==', `Camión #${equipoNumero}`)
+      );
+      
+      // Ejecutar ambas consultas en paralelo
+      const [snapId, snapNumero] = await Promise.all([
+        getDocs(qMantenimientosId),
+        getDocs(qMantenimientosNumero)
+      ]);
+      
+      // Combinar resultados, asegurándose de no duplicar entradas
+      const resultadosMap = new Map();
+      
+      // Procesar resultados de la primera consulta
+      snapId.forEach((doc) => {
+        resultadosMap.set(doc.id, { id: doc.id, ...doc.data() });
+      });
+      
+      // Agregar resultados de la segunda consulta que no estén duplicados
+      snapNumero.forEach((doc) => {
+        if (!resultadosMap.has(doc.id)) {
+          resultadosMap.set(doc.id, { id: doc.id, ...doc.data() });
+        }
+      });
+      
+      // Convertir map a array
+      const mantenimientosEquipo = Array.from(resultadosMap.values());
+      
+      // Procesar mantenimientos para formato de visualización
+      const mantenimientosProcesados = mantenimientosEquipo.map(mantenimiento => ({
+        id: mantenimiento.id,
+        fecha: mantenimiento.fecha || new Date(mantenimiento.fechaCreacion?.seconds * 1000 || Date.now()).toISOString().split('T')[0],
+        tipo: mantenimiento.tipo === 'preventivo' ? 'Preventivo' : 'Correctivo',
+        kilometraje: mantenimiento.kilometraje || 0,
+        descripcion: mantenimiento.descripcion || '',
+        repuestos: mantenimiento.repuestos || [],
+        mecanico: mantenimiento.mecanico || 'No asignado',
+        estado: mantenimiento.estado || 'pendiente',
+        fechaCompletado: mantenimiento.fechaCompletado
+      }));
+      
+      // Ordenar por fecha más reciente
+      mantenimientosProcesados.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+      
+      console.log(`Se encontraron ${mantenimientosProcesados.length} mantenimientos para el equipo`);
+      setHistorialMantenimientos(mantenimientosProcesados);
+    } catch (error) {
+      console.error("Error al cargar mantenimientos del equipo:", error);
+      setHistorialMantenimientos([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+  
   // Función simplificada para procesar historial
   const procesarHistorialEquipos = useCallback((equiposData, mantenimientosData) => {
     if (!isMounted.current) return;
@@ -213,13 +285,16 @@ const EquiposScreen = ({ navigation }) => {
     try {
       const equiposActualizados = equiposData.map(equipo => {
         // Solo procesar si hay mantenimientos para este equipo (optimización)
-        const mantenimientosEquipo = mantenimientosData.filter(m => m.equipoId === equipo.id);
+        const mantenimientosEquipo = mantenimientosData.filter(m => 
+          m.equipoId === equipo.id || m.equipo === `Camión #${equipo.numero}`
+        );
+        
         if (mantenimientosEquipo.length === 0) return equipo;
         
         // Procesamiento del historial para este equipo
         const historialEquipo = mantenimientosEquipo.map(mantenimiento => ({
           id: mantenimiento.id,
-          fecha: mantenimiento.fecha || new Date().toISOString().split('T')[0],
+          fecha: mantenimiento.fecha || new Date(mantenimiento.fechaCreacion?.seconds * 1000 || Date.now()).toISOString().split('T')[0],
           tipo: mantenimiento.tipo === 'preventivo' ? 'Preventivo' : 'Correctivo',
           kilometraje: mantenimiento.kilometraje || 0,
           descripcion: mantenimiento.descripcion || '',
@@ -335,7 +410,9 @@ const EquiposScreen = ({ navigation }) => {
         estado: 'Operativo'
       });
       
-      setIsLoading(false);
+      // Recargar datos para mostrar el nuevo equipo
+      cargarDatosCompletos();
+      
       alert("Equipo creado correctamente");
     } catch (error) {
       console.error("Error al crear equipo:", error);
@@ -412,7 +489,10 @@ const EquiposScreen = ({ navigation }) => {
       await updateDoc(equipoRef, equipoActualizado);
       
       setEditarModalVisible(false);
-      setIsLoading(false);
+      
+      // Recargar datos para mostrar los cambios
+      cargarDatosCompletos();
+      
       alert("Equipo actualizado correctamente");
     } catch (error) {
       console.error("Error al editar equipo:", error);
@@ -464,17 +544,30 @@ const EquiposScreen = ({ navigation }) => {
       
       // Eliminar mantenimientos asociados
       const mantenimientosRef = collection(firestore, 'mantenimientos');
-      const qMantenimientos = query(
+      
+      // Consulta por equipoId (principal)
+      const qMantenimientosId = query(
         mantenimientosRef,
         where('equipoId', '==', equipoSeleccionado.id)
       );
       
-      const mantenimientosSnap = await getDocs(qMantenimientos);
-      
-      // Eliminar todos los mantenimientos asociados en paralelo
-      const eliminarMantenimientos = mantenimientosSnap.docs.map(doc => 
-        deleteDoc(doc.ref)
+      // Consulta alternativa por número de equipo
+      const qMantenimientosNumero = query(
+        mantenimientosRef,
+        where('equipo', '==', `Camión #${equipoSeleccionado.numero}`)
       );
+      
+      // Ejecutar ambas consultas
+      const [snapId, snapNumero] = await Promise.all([
+        getDocs(qMantenimientosId),
+        getDocs(qMantenimientosNumero)
+      ]);
+      
+      // Eliminar todos los mantenimientos encontrados
+      const eliminarMantenimientos = [
+        ...snapId.docs.map(doc => deleteDoc(doc.ref)),
+        ...snapNumero.docs.map(doc => deleteDoc(doc.ref))
+      ];
       
       await Promise.all(eliminarMantenimientos);
       
@@ -483,7 +576,10 @@ const EquiposScreen = ({ navigation }) => {
       await deleteDoc(equipoRef);
       
       setEliminarModalVisible(false);
-      setIsLoading(false);
+      
+      // Recargar datos
+      cargarDatosCompletos();
+      
       alert("Equipo eliminado correctamente");
     } catch (error) {
       console.error("Error al confirmar eliminación:", error);
@@ -524,7 +620,9 @@ const EquiposScreen = ({ navigation }) => {
       
       setModalVisible(false);
       setNuevoKilometraje('');
-      setIsLoading(false);
+      
+      // Recargar datos para mostrar el cambio
+      cargarDatosCompletos();
       
       alert("Kilometraje actualizado correctamente");
       
@@ -560,56 +658,57 @@ const EquiposScreen = ({ navigation }) => {
     }
   }, []);
 
+  // Función para forzar recarga de datos
   // Función para forzar recarga
-  const handleForceReload = () => {
-    setIsLoading(true);
-    
-    // Recargar datos básicos rápidamente
-    const cargarBasico = async () => {
-      try {
-        const equiposRef = collection(firestore, 'equipos');
-        const qEquipos = query(equiposRef, orderBy('numero', 'asc'));
+const handleForceReload = () => {
+  setIsLoading(true);
+  
+  // Recargar datos básicos rápidamente
+  const cargarBasico = async () => {
+    try {
+      const equiposRef = collection(firestore, 'equipos');
+      const qEquipos = query(equiposRef, orderBy('numero', 'asc'));
+      
+      const equiposSnap = await getDocs(qEquipos);
+      
+      const equiposData = equiposSnap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        historial: []
+      }));
+      
+      setEquipos(equiposData);
+      setIsLoading(false);
+      
+      // Cargar el resto en segundo plano
+      setTimeout(() => {
+        cargarConductores();
         
-        const equiposSnap = await getDocs(qEquipos);
-        
-        const equiposData = equiposSnap.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          historial: []
-        }));
-        
-        setEquipos(equiposData);
-        setIsLoading(false);
-        
-        // Cargar el resto en segundo plano
-        setTimeout(() => {
-          cargarConductores();
+        // Recargar mantenimientos
+        const recargarMantenimientos = async () => {
+          const mantenimientosRef = collection(firestore, 'mantenimientos');
+          const mantenimientosSnap = await getDocs(mantenimientosRef);
           
-          // Recargar mantenimientos
-          const recargarMantenimientos = async () => {
-            const mantenimientosRef = collection(firestore, 'mantenimientos');
-            const mantenimientosSnap = await getDocs(mantenimientosRef);
-            
-            const mantenimientosData = mantenimientosSnap.docs.map(doc => ({
-              id: doc.id,
-              ...doc.data()
-            }));
-            
-            setMantenimientos(mantenimientosData);
-            procesarHistorialEquipos(equiposData, mantenimientosData);
-          };
+          const mantenimientosData = mantenimientosSnap.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
           
-          recargarMantenimientos();
-        }, 500);
-      } catch (error) {
-        console.error("Error al recargar datos:", error);
-        setIsLoading(false);
-        setErrorMsg("Error al recargar los equipos. Intente nuevamente.");
-      }
-    };
-    
-    cargarBasico();
+          setMantenimientos(mantenimientosData);
+          procesarHistorialEquipos(equiposData, mantenimientosData);
+        };
+        
+        recargarMantenimientos();
+      }, 500);
+    } catch (error) {
+      console.error("Error al recargar datos:", error);
+      setIsLoading(false);
+      setErrorMsg("Error al recargar los equipos. Intente nuevamente.");
+    }
   };
+  
+  cargarBasico();
+};
   
   // Pantalla de carga
   if (isLoading && equipos.length === 0) {
@@ -623,7 +722,7 @@ const EquiposScreen = ({ navigation }) => {
           startIcon={<RefreshIcon />}
           sx={{ mt: 2 }}
         >
-          Forzar recarga
+          Revisar equipos
         </Button>
       </Box>
     );
@@ -806,40 +905,28 @@ const EquiposScreen = ({ navigation }) => {
               </CardContent>
               
               <CardActions>
-              <Button 
-                size="small"
-                startIcon={<SpeedIcon />}
-                onClick={() => {
-                  setEquipoSeleccionado(equipo);
-                  setNuevoKilometraje('');
-                  setModalVisible(true);
-                }}
-              >
-                KM
-              </Button>
+                <Button 
+                  size="small"
+                  startIcon={<SpeedIcon />}
+                  onClick={() => {
+                    setEquipoSeleccionado(equipo);
+                    setNuevoKilometraje('');
+                    setModalVisible(true);
+                  }}
+                >
+                  KM
+                </Button>
                 <Button 
                   size="small"
                   startIcon={<HistoryIcon />}
                   onClick={() => {
                     setEquipoSeleccionado(equipo);
+                    // Cargar los mantenimientos específicos de este equipo
+                    cargarMantenimientosEquipo(equipo.id, equipo.numero);
                     setHistorialVisible(true);
                   }}
                 >
                   Historial
-                </Button>
-                <Button 
-                  size="small"
-                  startIcon={<BuildIcon />}
-                  onClick={() => {
-                    // Navigate to maintenance screen
-                    navigation?.navigate?.('MantencionScreen', {
-                      equipoId: equipo.id,
-                      equipoNumero: equipo.numero,
-                      kilometraje: equipo.kilometraje?.toString() || '0'
-                    });
-                  }}
-                >
-                  
                 </Button>
                 <IconButton 
                   size="small" 
@@ -1081,7 +1168,7 @@ const EquiposScreen = ({ navigation }) => {
           Historial - Camión #{equipoSeleccionado?.numero}
         </DialogTitle>
         <DialogContent>
-          {equipoSeleccionado?.historial && equipoSeleccionado.historial.length > 0 ? (
+          {historialMantenimientos.length > 0 ? (
             <TableContainer component={Paper} sx={{ mt: 2 }}>
               <Table>
                 <TableHead>
@@ -1097,7 +1184,7 @@ const EquiposScreen = ({ navigation }) => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {equipoSeleccionado.historial.map((item) => (
+                  {historialMantenimientos.map((item) => (
                     <TableRow key={item.id}>
                       <TableCell>{item.fecha}</TableCell>
                       <TableCell>
@@ -1160,13 +1247,24 @@ const EquiposScreen = ({ navigation }) => {
             </TableContainer>
           ) : (
             <Box display="flex" justifyContent="center" alignItems="center" p={4}>
-              <Typography color="textSecondary">
-                No hay registros de mantenimiento
-              </Typography>
+              {isLoading ? (
+                <CircularProgress size={40} />
+              ) : (
+                <Typography color="textSecondary">
+                  No hay registros de mantenimiento
+                </Typography>
+              )}
             </Box>
           )}
         </DialogContent>
         <DialogActions>
+          <Button 
+            onClick={handleForceReload} 
+            startIcon={<RefreshIcon />}
+            color="primary"
+          >
+            Recargar datos
+          </Button>
           <Button onClick={() => setHistorialVisible(false)}>Cerrar</Button>
         </DialogActions>
       </Dialog>

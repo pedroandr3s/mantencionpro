@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import {
   Box,
   Button,
@@ -18,7 +18,6 @@ import {
   Collapse,
   InputAdornment,
   Paper,
-  Tooltip,
   Fab
 } from '@mui/material';
 import {
@@ -39,6 +38,7 @@ import {
   collection, 
   doc,
   addDoc,
+  getDoc,
   getDocs, 
   updateDoc, 
   deleteDoc,
@@ -48,11 +48,22 @@ import {
   onSnapshot
 } from 'firebase/firestore';
 import firebaseApp from '../firebase/credenciales';
+import NavigationHelper, { withNavigationProtection } from '../NavigationManager';
 
 const firestore = getFirestore(firebaseApp);
 const auth = getAuth(firebaseApp);
 
 const InventarioScreen = ({ navigation, route }) => {
+  // Inicializar NavigationHelper
+  useEffect(() => {
+    NavigationHelper.initialize(navigation);
+  }, [navigation]);
+
+  // Control de montaje del componente
+  const isMounted = useRef(true);
+  const isNavigatingRef = useRef(false);
+  const unsubscribeRef = useRef(null);
+  
   // Estado para los repuestos e insumos
   const [inventario, setInventario] = useState([]);
   const [busqueda, setBusqueda] = useState('');
@@ -78,43 +89,123 @@ const InventarioScreen = ({ navigation, route }) => {
   const [historialMantenimientos, setHistorialMantenimientos] = useState([]);
   const [camiones, setCamiones] = useState([]);
   const [isLoadingHistorial, setIsLoadingHistorial] = useState(false);
+  
+  // Controlar el montaje/desmontaje del componente - usar useLayoutEffect para asegurar ejecución antes de renderizado
+  useLayoutEffect(() => {
+    isMounted.current = true;
+    isNavigatingRef.current = false;
+    
+    return () => {
+      isMounted.current = false;
+      
+      // Cancelar cualquier suscripción pendiente
+      if (unsubscribeRef.current) {
+        try {
+          unsubscribeRef.current();
+        } catch (error) {
+          console.error("Error al cancelar suscripción:", error);
+        }
+        unsubscribeRef.current = null;
+      }
+      
+      // Cerrar modales al desmontar
+      setModalVisible(false);
+      setHistorialModalVisible(false);
+    };
+  }, []);
 
+  // Función segura para actualizar estado
+  const safeSetState = (setter, value) => {
+    if (isMounted.current && !isNavigatingRef.current) {
+      try {
+        setter(value);
+      } catch (error) {
+        console.error("Error en safeSetState:", error);
+      }
+    }
+  };
+  
   // Verificar si se está accediendo desde MantencionScreen
   useEffect(() => {
     if (route?.params?.seleccionarRepuestos && route?.params?.mantenimientoId) {
       console.log("Seleccionando repuestos para mantenimiento:", route.params.mantenimientoId);
     }
+    
+    // Verificar si venimos de navegar desde otra pantalla con un repuesto actualizado
+    if (route?.params?.repuestoActualizado) {
+      // Refrescar los datos
+      cargarInventario();
+    }
   }, [route?.params]);
+
+  // Cargar inventario de forma segura
+  const cargarInventario = () => {
+    if (!isMounted.current || isNavigatingRef.current) return;
+    
+    safeSetState(setIsLoading, true);
+    safeSetState(setErrorMsg, null);
+    
+    // Limpiar suscripción previa si existe
+    if (unsubscribeRef.current) {
+      try {
+        unsubscribeRef.current();
+      } catch (error) {
+        console.error("Error al limpiar suscripción previa:", error);
+      }
+      unsubscribeRef.current = null;
+    }
+    
+    try {
+      const inventarioRef = collection(firestore, 'repuestos');
+      const q = query(inventarioRef, orderBy('nombre', 'asc'));
+      
+      const unsubscribe = onSnapshot(q, 
+        (snapshot) => {
+          if (!isMounted.current || isNavigatingRef.current) return;
+          
+          const inventarioData = [];
+          snapshot.forEach((doc) => {
+            inventarioData.push({
+              id: doc.id,
+              ...doc.data()
+            });
+          });
+          
+          safeSetState(setInventario, inventarioData);
+          safeSetState(setIsLoading, false);
+        },
+        (error) => {
+          if (!isMounted.current || isNavigatingRef.current) return;
+          
+          console.error("Error al escuchar cambios en inventario:", error);
+          safeSetState(setErrorMsg, "Error al obtener datos en tiempo real. Intente nuevamente.");
+          safeSetState(setIsLoading, false);
+        }
+      );
+      
+      // Guardar referencia para limpieza
+      unsubscribeRef.current = unsubscribe;
+    } catch (error) {
+      console.error("Error al configurar listener:", error);
+      safeSetState(setErrorMsg, "Error al configurar escucha de datos.");
+      safeSetState(setIsLoading, false);
+    }
+  };
 
   // Configurar listener para actualizaciones en tiempo real del inventario
   useEffect(() => {
-    setIsLoading(true);
-    setErrorMsg(null);
+    cargarInventario();
     
-    const inventarioRef = collection(firestore, 'repuestos');
-    const q = query(inventarioRef, orderBy('nombre', 'asc'));
-    
-    const unsubscribe = onSnapshot(q, 
-      (snapshot) => {
-        const inventarioData = [];
-        snapshot.forEach((doc) => {
-          inventarioData.push({
-            id: doc.id,
-            ...doc.data()
-          });
-        });
-        
-        setInventario(inventarioData);
-        setIsLoading(false);
-      },
-      (error) => {
-        console.error("Error al escuchar cambios en inventario:", error);
-        setErrorMsg("Error al obtener datos en tiempo real. Intente nuevamente.");
-        setIsLoading(false);
+    return () => {
+      if (unsubscribeRef.current) {
+        try {
+          unsubscribeRef.current();
+        } catch (error) {
+          console.error("Error al limpiar suscripción:", error);
+        }
+        unsubscribeRef.current = null;
       }
-    );
-    
-    return () => unsubscribe();
+    };
   }, []);
 
   // Filtrar inventario según término de búsqueda
@@ -126,8 +217,10 @@ const InventarioScreen = ({ navigation, route }) => {
 
   // Función para abrir el formulario para agregar un nuevo ítem
   const handleAddItem = () => {
-    setEditMode(false);
-    setFormData({
+    if (!isMounted.current || isNavigatingRef.current) return;
+    
+    safeSetState(setEditMode, false);
+    safeSetState(setFormData, {
       id: '',
       nombre: '',
       codigo: '',
@@ -138,13 +231,15 @@ const InventarioScreen = ({ navigation, route }) => {
       proveedor: '',
       unidad: ''
     });
-    setModalVisible(true);
+    safeSetState(setModalVisible, true);
   };
 
   // Función para abrir el formulario para editar un ítem existente
   const handleEditItem = (item) => {
-    setEditMode(true);
-    setFormData({
+    if (!isMounted.current || isNavigatingRef.current) return;
+    
+    safeSetState(setEditMode, true);
+    safeSetState(setFormData, {
       id: item.id,
       nombre: item.nombre || '',
       codigo: item.codigo || '',
@@ -155,22 +250,26 @@ const InventarioScreen = ({ navigation, route }) => {
       proveedor: item.proveedor || '',
       unidad: item.unidad || ''
     });
-    setModalVisible(true);
+    safeSetState(setModalVisible, true);
   };
 
   // Función para eliminar un ítem
   const handleDeleteItem = (id) => {
+    if (!isMounted.current || isNavigatingRef.current) return;
+    
     if (window.confirm("¿Está seguro que desea eliminar este elemento? Esta acción no se puede deshacer.")) {
-      setIsLoading(true);
+      safeSetState(setIsLoading, true);
       
       deleteDoc(doc(firestore, 'repuestos', id))
         .then(() => {
-          setIsLoading(false);
+          if (!isMounted.current || isNavigatingRef.current) return;
+          safeSetState(setIsLoading, false);
           alert("Elemento eliminado correctamente");
         })
         .catch((error) => {
+          if (!isMounted.current || isNavigatingRef.current) return;
           console.error("Error al eliminar:", error);
-          setIsLoading(false);
+          safeSetState(setIsLoading, false);
           alert("No se pudo eliminar el elemento. Intente nuevamente.");
         });
     }
@@ -178,13 +277,15 @@ const InventarioScreen = ({ navigation, route }) => {
 
   // Función para guardar un nuevo ítem o actualizar uno existente
   const handleSaveItem = async () => {
+    if (!isMounted.current || isNavigatingRef.current) return;
+    
     if (!formData.nombre || !formData.codigo || !formData.cantidad) {
       alert('Por favor complete los campos obligatorios');
       return;
     }
 
     try {
-      setIsLoading(true);
+      safeSetState(setIsLoading, true);
       
       const itemData = {
         nombre: formData.nombre,
@@ -201,28 +302,36 @@ const InventarioScreen = ({ navigation, route }) => {
       if (editMode) {
         const itemRef = doc(firestore, 'repuestos', formData.id);
         await updateDoc(itemRef, itemData);
+        
+        if (!isMounted.current || isNavigatingRef.current) return;
         alert("Elemento actualizado correctamente");
       } else {
         itemData.fechaCreacion = serverTimestamp();
         itemData.stock = parseInt(formData.cantidad) || 0;
         
         await addDoc(collection(firestore, 'repuestos'), itemData);
+        
+        if (!isMounted.current || isNavigatingRef.current) return;
         alert("Elemento agregado correctamente");
       }
 
-      setModalVisible(false);
-      setIsLoading(false);
+      safeSetState(setModalVisible, false);
+      safeSetState(setIsLoading, false);
     } catch (error) {
+      if (!isMounted.current || isNavigatingRef.current) return;
+      
       console.error("Error al guardar:", error);
-      setIsLoading(false);
+      safeSetState(setIsLoading, false);
       alert("No se pudo guardar el elemento. Intente nuevamente.");
     }
   };
 
   // Función para actualizar la cantidad de un ítem
   const actualizarCantidadItem = async (item, cantidad) => {
+    if (!isMounted.current || isNavigatingRef.current) return;
+    
     try {
-      setIsLoading(true);
+      safeSetState(setIsLoading, true);
       
       const nuevaCantidad = Math.max(0, cantidad);
       
@@ -233,16 +342,21 @@ const InventarioScreen = ({ navigation, route }) => {
         fechaActualizacion: serverTimestamp()
       });
       
-      setIsLoading(false);
+      if (!isMounted.current || isNavigatingRef.current) return;
+      safeSetState(setIsLoading, false);
     } catch (error) {
+      if (!isMounted.current || isNavigatingRef.current) return;
+      
       console.error("Error al actualizar cantidad:", error);
-      setIsLoading(false);
+      safeSetState(setIsLoading, false);
       alert("No se pudo actualizar la cantidad. Intente nuevamente.");
     }
   };
 
   // Función para descontar unidades
   const handleDescontarItem = (item) => {
+    if (!isMounted.current || isNavigatingRef.current) return;
+    
     if (item.cantidad > 0) {
       actualizarCantidadItem(item, item.cantidad - 1);
     } else {
@@ -252,19 +366,24 @@ const InventarioScreen = ({ navigation, route }) => {
 
   // Función para agregar unidades
   const handleAgregarItem = (item) => {
+    if (!isMounted.current || isNavigatingRef.current) return;
     actualizarCantidadItem(item, item.cantidad + 1);
   };
 
   // Función para ver historial de uso de un producto
   const handleVerHistorial = async (item) => {
-    setItemSeleccionado(item);
-    setHistorialModalVisible(true);
+    if (!isMounted.current || isNavigatingRef.current) return;
+    
+    safeSetState(setItemSeleccionado, item);
+    safeSetState(setHistorialModalVisible, true);
     
     try {
-      setIsLoadingHistorial(true);
+      safeSetState(setIsLoadingHistorial, true);
       
       const mantenimientosRef = collection(firestore, 'mantenimientos');
       const mantenimientosSnap = await getDocs(mantenimientosRef);
+      
+      if (!isMounted.current || isNavigatingRef.current) return;
       
       const mantenimientosData = [];
       mantenimientosSnap.forEach((doc) => {
@@ -279,10 +398,13 @@ const InventarioScreen = ({ navigation, route }) => {
         }
       });
       
-      setHistorialMantenimientos(mantenimientosData);
+      if (!isMounted.current || isNavigatingRef.current) return;
+      safeSetState(setHistorialMantenimientos, mantenimientosData);
       
       const equiposRef = collection(firestore, 'equipos');
       const equiposSnap = await getDocs(equiposRef);
+      
+      if (!isMounted.current || isNavigatingRef.current) return;
       
       const equiposData = [];
       equiposSnap.forEach((doc) => {
@@ -292,12 +414,14 @@ const InventarioScreen = ({ navigation, route }) => {
         });
       });
       
-      setCamiones(equiposData);
-      
-      setIsLoadingHistorial(false);
+      if (!isMounted.current || isNavigatingRef.current) return;
+      safeSetState(setCamiones, equiposData);
+      safeSetState(setIsLoadingHistorial, false);
     } catch (error) {
+      if (!isMounted.current || isNavigatingRef.current) return;
+      
       console.error("Error al cargar historial:", error);
-      setIsLoadingHistorial(false);
+      safeSetState(setIsLoadingHistorial, false);
       alert("No se pudo cargar el historial. Intente nuevamente.");
     }
   };
@@ -352,12 +476,216 @@ const InventarioScreen = ({ navigation, route }) => {
     return total;
   };
 
+  // Función para seleccionar un repuesto para el mantenimiento de manera segura
+  const handleSeleccionarRepuesto = async (item) => {
+    if (!isMounted.current || isNavigatingRef.current) return;
+    
+    try {
+      // Marcar que estamos comenzando una operación de navegación
+      isNavigatingRef.current = true;
+      
+      // Verificar stock una vez más por seguridad
+      if (item.cantidad <= 0) {
+        alert('No hay stock disponible');
+        isNavigatingRef.current = false;
+        return;
+      }
+      
+      console.log("Seleccionando repuesto para mantenimiento:", item.nombre);
+      console.log("ID de mantenimiento:", route.params.mantenimientoId);
+      
+      // Cerrar cualquier modal abierto primero
+      safeSetState(setModalVisible, false);
+      safeSetState(setHistorialModalVisible, false);
+      
+      // Mostrar indicador de carga
+      safeSetState(setIsLoading, true);
+      
+      // Obtener el mantenimiento actual
+      const mantenimientoRef = doc(firestore, 'mantenimientos', route.params.mantenimientoId);
+      let mantenimientoDoc;
+      
+      try {
+        mantenimientoDoc = await getDoc(mantenimientoRef);
+      } catch (error) {
+        console.error("Error al obtener mantenimiento:", error);
+        isNavigatingRef.current = false;
+        safeSetState(setIsLoading, false);
+        alert("Error: No se pudo acceder al mantenimiento seleccionado");
+        return;
+      }
+      
+      if (!mantenimientoDoc.exists()) {
+        isNavigatingRef.current = false;
+        safeSetState(setIsLoading, false);
+        alert('Error: No se encontró el mantenimiento seleccionado');
+        return;
+      }
+      
+      const mantenimientoData = mantenimientoDoc.data();
+      
+      // Verificar si el repuesto ya está en la lista
+      const repuestosActuales = mantenimientoData.repuestos || [];
+      const repuestoExistente = repuestosActuales.find(r => r.id === item.id);
+      
+      let nuevosRepuestos = [];
+      let cantidadASumar = 1; // Cantidad a agregar o sumar
+      
+      if (repuestoExistente) {
+        // Si ya existe, incrementar cantidad
+        if (repuestoExistente.cantidad >= item.cantidad) {
+          isNavigatingRef.current = false;
+          safeSetState(setIsLoading, false);
+          alert(`No hay suficiente stock de ${item.nombre}. Disponible: ${item.cantidad}`);
+          return;
+        }
+        
+        nuevosRepuestos = repuestosActuales.map(r => 
+          r.id === item.id 
+            ? { ...r, cantidad: r.cantidad + cantidadASumar } 
+            : r
+        );
+      } else {
+        // Si no existe, agregarlo
+        nuevosRepuestos = [
+          ...repuestosActuales,
+          {
+            id: item.id,
+            nombre: item.nombre,
+            cantidad: cantidadASumar
+          }
+        ];
+      }
+      
+      try {
+        // Actualizar el mantenimiento con los nuevos repuestos
+        await updateDoc(mantenimientoRef, {
+          repuestos: nuevosRepuestos,
+          fechaActualizacion: serverTimestamp()
+        });
+      } catch (error) {
+        console.error("Error al actualizar mantenimiento:", error);
+        isNavigatingRef.current = false;
+        safeSetState(setIsLoading, false);
+        alert("Error al actualizar el mantenimiento. Intente nuevamente.");
+        return;
+      }
+      
+      try {
+        // Actualizar el stock del repuesto
+        const nuevoStock = Math.max(0, item.cantidad - cantidadASumar);
+        const repuestoRef = doc(firestore, 'repuestos', item.id);
+        
+        await updateDoc(repuestoRef, {
+          cantidad: nuevoStock,
+          stock: nuevoStock,
+          fechaActualizacion: serverTimestamp()
+        });
+      } catch (error) {
+        console.error("Error al actualizar stock:", error);
+        // Continuar a pesar del error, ya que el mantenimiento se actualizó
+      }
+      
+      // Utilizar el NavigationHelper para navegar de forma segura
+      const resultado = NavigationHelper.navigate('MantencionScreen', { 
+        mantenimientoId: route.params.mantenimientoId,
+        repuestoActualizado: true,
+        timestamp: new Date().getTime() // Para forzar refresh
+      });
+      
+      if (!resultado) {
+        // Si la navegación no fue exitosa, restablecer estado
+        isNavigatingRef.current = false;
+        safeSetState(setIsLoading, false);
+        alert("Repuesto agregado correctamente. Por favor regrese a la pantalla anterior manualmente.");
+      }
+    } catch (error) {
+      isNavigatingRef.current = false;
+      safeSetState(setIsLoading, false);
+      console.error("Error al seleccionar repuesto:", error);
+      alert("Error al seleccionar repuesto: " + error.message);
+    }
+  };
+
+  // Función para navegar al mantenimiento desde el historial
+  const navegarAMantenimiento = (mantenimientoId) => {
+    if (!isMounted.current || isNavigatingRef.current) return;
+    
+    try {
+      // Cerrar el modal primero
+      safeSetState(setHistorialModalVisible, false);
+      
+      // Marcar que estamos navegando
+      isNavigatingRef.current = true;
+      
+      // Cancelar cualquier suscripción pendiente
+      if (unsubscribeRef.current) {
+        try {
+          unsubscribeRef.current();
+          unsubscribeRef.current = null;
+        } catch (error) {
+          console.error("Error al cancelar suscripción:", error);
+        }
+      }
+      
+      // Usar NavigationHelper para navegar de forma segura
+      NavigationHelper.navigate('MantencionScreen', { 
+        mantenimientoId: mantenimientoId,
+        timestamp: new Date().getTime() // Para forzar refresh
+      });
+    } catch (error) {
+      console.error("Error al navegar a mantenimiento:", error);
+      isNavigatingRef.current = false;
+      alert("Error al navegar: " + error.message);
+    }
+  };
+
+  // Manejar el cierre seguro de modales
+  const cerrarModalSeguro = (setterFn) => {
+    if (!isMounted.current) return;
+    
+    try {
+      // Usar un pequeño retraso para evitar problemas de DOM
+      setTimeout(() => {
+        if (isMounted.current) {
+          setterFn(false);
+        }
+      }, 50);
+    } catch (error) {
+      console.error("Error al cerrar modal:", error);
+    }
+  };
+
   // Si está cargando, mostrar indicador
   if (isLoading && inventario.length === 0) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
         <CircularProgress />
         <Typography sx={{ ml: 2 }}>Cargando inventario...</Typography>
+      </Box>
+    );
+  }
+
+  // Renderizar el componente SOLO si no estamos navegando
+  if (isNavigatingRef.current) {
+    return (
+      <Box 
+        display="flex" 
+        justifyContent="center" 
+        alignItems="center" 
+        minHeight="100vh"
+        sx={{ 
+          position: 'fixed',
+          top: 0, 
+          left: 0, 
+          right: 0, 
+          bottom: 0,
+          backgroundColor: 'rgba(255,255,255,0.7)',
+          zIndex: 9999
+        }}
+      >
+        <CircularProgress size={60} />
+        <Typography sx={{ ml: 2, fontWeight: 'bold' }}>Navegando...</Typography>
       </Box>
     );
   }
@@ -393,7 +721,7 @@ const InventarioScreen = ({ navigation, route }) => {
           variant="outlined"
           placeholder="Buscar repuesto o insumo..."
           value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
+          onChange={(e) => !isNavigatingRef.current && safeSetState(setBusqueda, e.target.value)}
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
@@ -410,7 +738,11 @@ const InventarioScreen = ({ navigation, route }) => {
             severity="error" 
             sx={{ mb: 2 }}
             action={
-              <Button color="inherit" size="small" onClick={() => window.location.reload()}>
+              <Button 
+                color="inherit" 
+                size="small" 
+                onClick={() => !isNavigatingRef.current && window.location.reload()}
+              >
                 Recargar
               </Button>
             }
@@ -433,9 +765,15 @@ const InventarioScreen = ({ navigation, route }) => {
                     <Chip label={item.codigo} size="small" sx={{ mb: 1 }} />
                   </div>
                   
-                  <IconButton size="small" onClick={() => handleDeleteItem(item.id)}>
-                    <DeleteIcon fontSize="small" color="error" />
-                  </IconButton>
+                  {!route?.params?.seleccionarRepuestos && (
+                    <IconButton 
+                      size="small" 
+                      onClick={() => !isNavigatingRef.current && handleDeleteItem(item.id)}
+                      disabled={isLoading || isNavigatingRef.current}
+                    >
+                      <DeleteIcon fontSize="small" color="error" />
+                    </IconButton>
+                  )}
                 </Box>
                 
                 <Grid container spacing={1} sx={{ mb: 2 }}>
@@ -470,13 +808,15 @@ const InventarioScreen = ({ navigation, route }) => {
                         Cantidad:
                       </Typography>
                       <Box display="flex" alignItems="center">
-                        <IconButton 
-                          size="small" 
-                          onClick={() => handleDescontarItem(item)}
-                          disabled={isLoading}
-                        >
-                          <RemoveIcon fontSize="small" color="error" />
-                        </IconButton>
+                        {!route?.params?.seleccionarRepuestos && (
+                          <IconButton 
+                            size="small" 
+                            onClick={() => !isNavigatingRef.current && handleDescontarItem(item)}
+                            disabled={isLoading || isNavigatingRef.current}
+                          >
+                            <RemoveIcon fontSize="small" color="error" />
+                          </IconButton>
+                        )}
                         
                         <Typography 
                           variant="h6" 
@@ -488,33 +828,39 @@ const InventarioScreen = ({ navigation, route }) => {
                           {item.cantidad}
                         </Typography>
                         
-                        <IconButton 
-                          size="small" 
-                          onClick={() => handleAgregarItem(item)}
-                          disabled={isLoading}
-                        >
-                          <AddIcon fontSize="small" color="success" />
-                        </IconButton>
+                        {!route?.params?.seleccionarRepuestos && (
+                          <IconButton 
+                            size="small" 
+                            onClick={() => !isNavigatingRef.current && handleAgregarItem(item)}
+                            disabled={isLoading || isNavigatingRef.current}
+                          >
+                            <AddIcon fontSize="small" color="success" />
+                          </IconButton>
+                        )}
                       </Box>
                     </Box>
                   </Box>
                   
-                  <Box display="flex" justifyContent="flex-end" gap={1}>
-                    <Button 
-                      size="small"
-                      startIcon={<EditIcon />}
-                      onClick={() => handleEditItem(item)}
-                    >
-                      Editar
-                    </Button>
-                    <Button 
-                      size="small"
-                      startIcon={<HistoryIcon />}
-                      onClick={() => handleVerHistorial(item)}
-                    >
-                      Historial
-                    </Button>
-                  </Box>
+                  {!route?.params?.seleccionarRepuestos && (
+                    <Box display="flex" justifyContent="flex-end" gap={1}>
+                      <Button 
+                        size="small"
+                        startIcon={<EditIcon />}
+                        onClick={() => !isNavigatingRef.current && handleEditItem(item)}
+                        disabled={isNavigatingRef.current}
+                      >
+                        Editar
+                      </Button>
+                      <Button 
+                        size="small"
+                        startIcon={<HistoryIcon />}
+                        onClick={() => !isNavigatingRef.current && handleVerHistorial(item)}
+                        disabled={isNavigatingRef.current}
+                      >
+                        Historial
+                      </Button>
+                    </Box>
+                  )}
                 </Box>
                 
                 {item.cantidad < item.minimo && (
@@ -529,22 +875,8 @@ const InventarioScreen = ({ navigation, route }) => {
                     variant="contained"
                     color="primary"
                     startIcon={<AddCircleIcon />}
-                    disabled={item.cantidad <= 0 || isLoading}
-                    onClick={() => {
-                      if (item.cantidad > 0) {
-                        navigation?.navigate?.('MantencionScreen', {
-                          mantenimientoId: route.params.mantenimientoId,
-                          repuestoSeleccionado: {
-                            id: item.id,
-                            nombre: item.nombre,
-                            cantidad: 1,
-                            stock: item.cantidad
-                          }
-                        });
-                      } else {
-                        alert('No hay stock disponible');
-                      }
-                    }}
+                    disabled={item.cantidad <= 0 || isLoading || isNavigatingRef.current}
+                    onClick={() => !isNavigatingRef.current && handleSeleccionarRepuesto(item)}
                     sx={{ mt: 2 }}
                   >
                     {item.cantidad > 0 ? 'Seleccionar' : 'Sin stock'}
@@ -567,7 +899,8 @@ const InventarioScreen = ({ navigation, route }) => {
       {!route?.params?.seleccionarRepuestos && (
         <Fab
           color="primary"
-          onClick={handleAddItem}
+          onClick={() => !isNavigatingRef.current && handleAddItem()}
+          disabled={isNavigatingRef.current}
           sx={{
             position: 'fixed',
             bottom: 80,
@@ -578,233 +911,255 @@ const InventarioScreen = ({ navigation, route }) => {
         </Fab>
       )}
       
-      {/* Modal para agregar o editar ítem */}
-      <Dialog
-        open={modalVisible}
-        onClose={() => setModalVisible(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>
-          {editMode ? 'Editar Ítem' : 'Agregar Nuevo Ítem'}
-          <IconButton
-            onClick={() => setModalVisible(false)}
-            sx={{ position: 'absolute', right: 8, top: 8 }}
-          >
-            <CloseIcon />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent>
-          <Box sx={{ mt: 2 }}>
-            <Grid container spacing={2}>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Nombre *"
-                  value={formData.nombre}
-                  onChange={(e) => setFormData({...formData, nombre: e.target.value})}
-                  placeholder="Nombre del repuesto o insumo"
-                />
+      {/* Modal para agregar o editar ítem - Renderizado condicionalmente */}
+      {modalVisible && !isNavigatingRef.current && (
+        <Dialog
+          open={modalVisible}
+          onClose={() => !isNavigatingRef.current && cerrarModalSeguro(setModalVisible)}
+          maxWidth="sm"
+          fullWidth
+          disableRestoreFocus={true}
+          disableEnforceFocus={true}
+          disablePortal={true}
+        >
+          <DialogTitle>
+            {editMode ? 'Editar Ítem' : 'Agregar Nuevo Ítem'}
+            <IconButton
+              onClick={() => !isNavigatingRef.current && cerrarModalSeguro(setModalVisible)}
+              sx={{ position: 'absolute', right: 8, top: 8 }}
+              disabled={isNavigatingRef.current}
+            >
+              <CloseIcon />
+            </IconButton>
+          </DialogTitle>
+          <DialogContent>
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Nombre *"
+                    value={formData.nombre}
+                    onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, nombre: e.target.value})}
+                    placeholder="Nombre del repuesto o insumo"
+                    disabled={isNavigatingRef.current}
+                  />
+                </Grid>
+                
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Código *"
+                    value={formData.codigo}
+                    onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, codigo: e.target.value})}
+                    placeholder="Código de referencia"
+                    disabled={isNavigatingRef.current}
+                  />
+                </Grid>
+                
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Cantidad *"
+                    type="number"
+                    value={formData.cantidad}
+                    onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, cantidad: e.target.value})}
+                    placeholder="Cantidad disponible"
+                    disabled={isNavigatingRef.current}
+                  />
+                </Grid>
+                
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Cantidad Mínima"
+                    type="number"
+                    value={formData.minimo}
+                    onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, minimo: e.target.value})}
+                    placeholder="Cantidad mínima recomendada"
+                    disabled={isNavigatingRef.current}
+                  />
+                </Grid>
+                
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Unidad"
+                    value={formData.unidad}
+                    onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, unidad: e.target.value})}
+                    placeholder="Unidad (litros, unidades, etc.)"
+                    disabled={isNavigatingRef.current}
+                  />
+                </Grid>
+                
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Categoría"
+                    value={formData.categoria}
+                    onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, categoria: e.target.value})}
+                    placeholder="Categoría del ítem"
+                    disabled={isNavigatingRef.current}
+                  />
+                </Grid>
+                
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Ubicación"
+                    value={formData.ubicacion}
+                    onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, ubicacion: e.target.value})}
+                    placeholder="Ubicación en almacén"
+                    disabled={isNavigatingRef.current}
+                  />
+                </Grid>
+                
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Proveedor"
+                    value={formData.proveedor}
+                    onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, proveedor: e.target.value})}
+                    placeholder="Proveedor"
+                    disabled={isNavigatingRef.current}
+                  />
+                </Grid>
               </Grid>
-              
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Código *"
-                  value={formData.codigo}
-                  onChange={(e) => setFormData({...formData, codigo: e.target.value})}
-                  placeholder="Código de referencia"
-                />
-              </Grid>
-              
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Cantidad *"
-                  type="number"
-                  value={formData.cantidad}
-                  onChange={(e) => setFormData({...formData, cantidad: e.target.value})}
-                  placeholder="Cantidad disponible"
-                />
-              </Grid>
-              
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Cantidad Mínima"
-                  type="number"
-                  value={formData.minimo}
-                  onChange={(e) => setFormData({...formData, minimo: e.target.value})}
-                  placeholder="Cantidad mínima recomendada"
-                />
-              </Grid>
-              
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Unidad"
-                  value={formData.unidad}
-                  onChange={(e) => setFormData({...formData, unidad: e.target.value})}
-                  placeholder="Unidad (litros, unidades, etc.)"
-                />
-              </Grid>
-              
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Categoría"
-                  value={formData.categoria}
-                  onChange={(e) => setFormData({...formData, categoria: e.target.value})}
-                  placeholder="Categoría del ítem"
-                />
-              </Grid>
-              
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Ubicación"
-                  value={formData.ubicacion}
-                  onChange={(e) => setFormData({...formData, ubicacion: e.target.value})}
-                  placeholder="Ubicación en almacén"
-                />
-              </Grid>
-              
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Proveedor"
-                  value={formData.proveedor}
-                  onChange={(e) => setFormData({...formData, proveedor: e.target.value})}
-                  placeholder="Proveedor"
-                />
-              </Grid>
-            </Grid>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setModalVisible(false)}>Cancelar</Button>
-          <Button
-            variant="contained"
-            onClick={handleSaveItem}
-            disabled={isLoading}
-          >
-            {isLoading ? <CircularProgress size={24} /> : (editMode ? 'Actualizar' : 'Guardar')}
-          </Button>
-        </DialogActions>
-      </Dialog>
-      
-      {/* Modal para mostrar historial de uso */}
-      <Dialog
-        open={historialModalVisible}
-        onClose={() => setHistorialModalVisible(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>
-          Historial de Uso: {itemSeleccionado?.nombre}
-          <IconButton
-            onClick={() => setHistorialModalVisible(false)}
-            sx={{ position: 'absolute', right: 8, top: 8 }}
-          >
-            <CloseIcon />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent>
-          {isLoadingHistorial ? (
-            <Box display="flex" justifyContent="center" alignItems="center" p={5}>
-              <CircularProgress />
-              <Typography sx={{ ml: 2 }}>Cargando historial...</Typography>
             </Box>
-          ) : itemSeleccionado && (
-            <>
-              <Paper sx={{ bgcolor: '#e6f7ff', p: 2, mb: 3 }}>
-                <Typography variant="subtitle1" fontWeight="bold">
-                  Total utilizado: {calcularTotalUtilizado()} {itemSeleccionado.unidad || 'unidades'}
-                </Typography>
-                <Typography variant="subtitle1" fontWeight="bold">
-                  Disponible actualmente: {itemSeleccionado.cantidad} {itemSeleccionado.unidad || 'unidades'}
-                </Typography>
-              </Paper>
-              
-              {obtenerHistorialProducto().length > 0 ? (
-                obtenerHistorialProducto()
-                  .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
-                  .map((registro, index) => (
-                    <Paper 
-                      key={`${registro.mantenimientoId}-${index}`} 
-                      sx={{ 
-                        p: 2, 
-                        mb: 2,
-                        borderLeft: '4px solid #1890ff'
-                      }}
-                    >
-                      <Box display="flex" justifyContent="space-between" mb={1}>
-                        <Typography fontWeight="bold">
-                          {registro.fecha}
-                        </Typography>
-                        <Chip 
-                          label={`${registro.cantidad} ${itemSeleccionado.unidad || 'unidades'}`}
-                          color="primary"
-                          size="small"
-                        />
-                      </Box>
-                      
-                      <Grid container spacing={1} sx={{ borderTop: '1px solid #eee', pt: 1 }}>
-                        <Grid item xs={12}>
-                          <Typography variant="body2">
-                            <strong>Equipo:</strong> {obtenerNombreEquipo(registro.camionId)}
-                          </Typography>
-                        </Grid>
-                        <Grid item xs={12}>
-                          <Typography variant="body2">
-                            <strong>Tipo:</strong>{' '}
-                            <span style={{ color: registro.tipo === 'preventivo' ? '#52c41a' : '#1890ff' }}>
-                              {registro.tipo === 'preventivo' ? 'Preventivo' : 'Correctivo'}
-                            </span>
-                          </Typography>
-                        </Grid>
-                        <Grid item xs={12}>
-                          <Typography variant="body2">
-                            <strong>Kilometraje:</strong>{' '}
-                            {registro.kilometraje ? registro.kilometraje.toLocaleString() + ' km' : 'No registrado'}
-                          </Typography>
-                        </Grid>
-                        <Grid item xs={12}>
-                          <Typography variant="body2">
-                            <strong>Descripción:</strong> {registro.descripcion || 'Sin descripción'}
-                          </Typography>
-                        </Grid>
-                      </Grid>
-                      
-                      <Box display="flex" justifyContent="flex-end" mt={1}>
-                        <Button
-                          size="small"
-                          endIcon={<ChevronRightIcon />}
-                          onClick={() => {
-                            setHistorialModalVisible(false);
-                            navigation?.navigate?.('MantencionScreen', { 
-                              mantenimientoId: registro.mantenimientoId 
-                            });
-                          }}
-                        >
-                          Ver mantenimiento
-                        </Button>
-                      </Box>
-                    </Paper>
-                  ))
-              ) : (
-                <Box display="flex" justifyContent="center" alignItems="center" p={5}>
-                  <Typography variant="h6" color="textSecondary">
-                    No hay registros de uso para este producto
+          </DialogContent>
+          <DialogActions>
+            <Button 
+              onClick={() => !isNavigatingRef.current && cerrarModalSeguro(setModalVisible)}
+              disabled={isNavigatingRef.current}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="contained"
+              onClick={() => !isNavigatingRef.current && handleSaveItem()}
+              disabled={isLoading || isNavigatingRef.current}
+            >
+              {isLoading ? <CircularProgress size={24} /> : (editMode ? 'Actualizar' : 'Guardar')}
+            </Button>
+          </DialogActions>
+        </Dialog>
+      )}
+      
+      {/* Modal para mostrar historial de uso - Renderizado condicionalmente */}
+      {historialModalVisible && !isNavigatingRef.current && (
+        <Dialog
+          open={historialModalVisible}
+          onClose={() => !isNavigatingRef.current && cerrarModalSeguro(setHistorialModalVisible)}
+          maxWidth="md"
+          fullWidth
+          disableRestoreFocus={true}
+          disableEnforceFocus={true}
+          disablePortal={true}
+        >
+          <DialogTitle>
+            Historial de Uso: {itemSeleccionado?.nombre}
+            <IconButton
+              onClick={() => !isNavigatingRef.current && cerrarModalSeguro(setHistorialModalVisible)}
+              sx={{ position: 'absolute', right: 8, top: 8 }}
+              disabled={isNavigatingRef.current}
+            >
+              <CloseIcon />
+            </IconButton>
+          </DialogTitle>
+          <DialogContent>
+            {isLoadingHistorial ? (
+              <Box display="flex" justifyContent="center" alignItems="center" p={5}>
+                <CircularProgress />
+                <Typography sx={{ ml: 2 }}>Cargando historial...</Typography>
+              </Box>
+            ) : itemSeleccionado && (
+              <>
+                <Paper sx={{ bgcolor: '#e6f7ff', p: 2, mb: 3 }}>
+                  <Typography variant="subtitle1" fontWeight="bold">
+                    Total utilizado: {calcularTotalUtilizado()} {itemSeleccionado.unidad || 'unidades'}
                   </Typography>
-                </Box>
-              )}
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+                  <Typography variant="subtitle1" fontWeight="bold">
+                    Disponible actualmente: {itemSeleccionado.cantidad} {itemSeleccionado.unidad || 'unidades'}
+                  </Typography>
+                </Paper>
+                
+                {obtenerHistorialProducto().length > 0 ? (
+                  obtenerHistorialProducto()
+                    .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
+                    .map((registro, index) => (
+                      <Paper 
+                        key={`${registro.mantenimientoId}-${index}`} 
+                        sx={{ 
+                          p: 2, 
+                          mb: 2,
+                          borderLeft: '4px solid #1890ff'
+                        }}
+                      >
+                        <Box display="flex" justifyContent="space-between" mb={1}>
+                          <Typography fontWeight="bold">
+                            {registro.fecha}
+                          </Typography>
+                          <Chip 
+                            label={`${registro.cantidad} ${itemSeleccionado.unidad || 'unidades'}`}
+                            color="primary"
+                            size="small"
+                          />
+                        </Box>
+                        
+                        <Grid container spacing={1} sx={{ borderTop: '1px solid #eee', pt: 1 }}>
+                          <Grid item xs={12}>
+                            <Typography variant="body2">
+                              <strong>Equipo:</strong> {obtenerNombreEquipo(registro.camionId)}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={12}>
+                            <Typography variant="body2">
+                              <strong>Tipo:</strong>{' '}
+                              <span style={{ color: registro.tipo === 'preventivo' ? '#52c41a' : '#1890ff' }}>
+                                {registro.tipo === 'preventivo' ? 'Preventivo' : 'Correctivo'}
+                              </span>
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={12}>
+                            <Typography variant="body2">
+                              <strong>Kilometraje:</strong>{' '}
+                              {registro.kilometraje ? registro.kilometraje.toLocaleString() + ' km' : 'No registrado'}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={12}>
+                            <Typography variant="body2">
+                              <strong>Descripción:</strong> {registro.descripcion || 'Sin descripción'}
+                            </Typography>
+                          </Grid>
+                        </Grid>
+                        
+                        <Box display="flex" justifyContent="flex-end" mt={1}>
+                          <Button
+                            size="small"
+                            endIcon={<ChevronRightIcon />}
+                            onClick={() => !isNavigatingRef.current && navegarAMantenimiento(registro.mantenimientoId)}
+                            disabled={isNavigatingRef.current}
+                          >
+                            Ver mantenimiento
+                          </Button>
+                        </Box>
+                      </Paper>
+                    ))
+                ) : (
+                  <Box display="flex" justifyContent="center" alignItems="center" p={5}>
+                    <Typography variant="h6" color="textSecondary">
+                      No hay registros de uso para este producto
+                    </Typography>
+                  </Box>
+                )}
+              </>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
     </Box>
   );
 };
 
-export default InventarioScreen;
+// Exportar el componente envuelto con el HOC de protección de navegación
+export default withNavigationProtection(InventarioScreen);

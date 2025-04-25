@@ -11,23 +11,74 @@ import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, getDoc } from 'firebase/firestore';
 import firebaseApp from './firebase/credenciales';
 
+// Importar NavigationProvider
+import { NavigationProvider } from './NavigationManager';
+
 const auth = getAuth(firebaseApp);
 const firestore = getFirestore(firebaseApp);
 
 // Función global para manejar promesas rechazadas no capturadas
 const setupUnhandledRejectionHandler = () => {
   window.addEventListener('unhandledrejection', function(event) {
-    if (event.reason && event.reason.message && event.reason.message.includes('message channel closed')) {
-      console.log('Ignorando error específico de canal de mensajes:', event.reason.message);
-      event.preventDefault();
+    if (event.reason && event.reason.message) {
+      // Ignorar errores específicos relacionados con la navegación y DOM
+      if (event.reason.message.includes('message channel closed') || 
+          event.reason.message.includes('removeChild') ||
+          event.reason.message.includes('Node') ||
+          event.reason.message.includes('child of this node')) {
+        console.log('Ignorando error específico:', event.reason.message);
+        event.preventDefault();
+      }
     }
   });
+};
+
+// Función para crear navegación compatible con nuestro NavigationManager
+const createNavigationCompatibilityLayer = () => {
+  return {
+    navigate: (routeName, params = {}) => {
+      let url = '/' + routeName.toLowerCase();
+      
+      // Añadir parámetros como query string
+      if (Object.keys(params).length > 0) {
+        url += '?' + new URLSearchParams(params).toString();
+      }
+      
+      // Usar window.location para navegar
+      window.location.href = url;
+      return true;
+    },
+    goBack: () => {
+      window.history.back();
+      return true;
+    }
+  };
+};
+
+// Función para extraer parámetros de la URL
+const extractUrlParams = () => {
+  const urlParams = new URLSearchParams(window.location.search);
+  const params = {};
+  
+  for (const [key, value] of urlParams.entries()) {
+    try {
+      // Intentar analizar valores JSON si es posible
+      params[key] = JSON.parse(value);
+    } catch (e) {
+      // Si no es JSON, usar el valor como está
+      params[key] = value;
+    }
+  }
+  
+  return { params };
 };
 
 const App = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [userData, setUserData] = useState(null);
+  const [navigationObject] = useState(createNavigationCompatibilityLayer());
+  const [routeObject] = useState(extractUrlParams());
 
   // Configurar el manejador de errores global
   useEffect(() => {
@@ -173,37 +224,71 @@ const App = () => {
   }
 
   return (
-    <Router>
-      <div style={styles.container}>
-        <Routes>
-          <Route 
-            path="/login" 
-            element={isLoggedIn ? <Navigate to="/mantencionpro" /> : <Login />} 
-          />
-          <Route 
-            path="/loading" 
-            element={<LoadingBridge />} 
-          />
-          <Route 
-            path="/mantencionpro" 
-            element={
-              isLoggedIn ? (
-                <MantencionPRO 
-                  userData={userData} 
-                  onLogout={handleLogout} 
-                />
-              ) : (
-                <Navigate to="/login" />
-              )
-            } 
-          />
-          <Route 
-            path="/" 
-            element={<Navigate to={isLoggedIn ? "/mantencionpro" : "/login"} />} 
-          />
-        </Routes>
-      </div>
-    </Router>
+    <NavigationProvider>
+      <Router>
+        <div style={styles.container}>
+          <Routes>
+            <Route 
+              path="/login" 
+              element={isLoggedIn ? <Navigate to="/mantencionpro" /> : <Login />} 
+            />
+            <Route 
+              path="/loading" 
+              element={<LoadingBridge />} 
+            />
+            <Route 
+              path="/mantencionpro/*" 
+              element={
+                isLoggedIn ? (
+                  <MantencionPRO 
+                    userData={userData} 
+                    onLogout={handleLogout}
+                    navigation={navigationObject}
+                    route={routeObject}
+                  />
+                ) : (
+                  <Navigate to="/login" />
+                )
+              } 
+            />
+            <Route 
+              path="/" 
+              element={<Navigate to={isLoggedIn ? "/mantencionpro" : "/login"} />} 
+            />
+          </Routes>
+        </div>
+      </Router>
+      
+      {/* Estilos globales para la capa de transición y animaciones */}
+      <style jsx global>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        
+        .navigation-transition {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background-color: rgba(255, 255, 255, 0.7);
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          z-index: 9999;
+        }
+        
+        .loading-spinner {
+          width: 50px;
+          height: 50px;
+          border: 5px solid #f3f3f3;
+          border-top: 5px solid #3498db;
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+        }
+      `}</style>
+    </NavigationProvider>
   );
 };
 

@@ -242,51 +242,27 @@ const ReporteFallasScreen = () => {
   // Obtener el último número de ticket
   const obtenerUltimoTicket = async () => {
     try {
-      // Colección para controlar los contadores
-      const contadoresRef = doc(firestore, 'contadores', 'tickets');
-      const contadorDoc = await getDoc(contadoresRef);
+      // Consultar directamente la colección de fallas para obtener el ticket más alto
+      const fallasRef = collection(firestore, 'fallas');
+      const querySnapshot = await getDocs(fallasRef);
       
-      if (contadorDoc.exists()) {
-        return contadorDoc.data().ultimoTicket || 0;
-      } else {
-        // Si no existe el documento, crearlo
-        await addDoc(collection(firestore, 'contadores'), {
-          id: 'tickets',
-          ultimoTicket: 0
-        });
-        return 0;
-      }
+      let maxTicket = 0;
+      
+      // Revisar cada documento para encontrar el número de ticket más alto
+      querySnapshot.forEach((doc) => {
+        const fallaData = doc.data();
+        if (fallaData.numeroTicket && typeof fallaData.numeroTicket === 'number') {
+          if (fallaData.numeroTicket > maxTicket) {
+            maxTicket = fallaData.numeroTicket;
+          }
+        }
+      });
+      
+      console.log('Número de ticket más alto encontrado:', maxTicket);
+      return maxTicket;
     } catch (error) {
       console.error('Error al obtener último ticket:', error);
-      // Si hay error al leer el documento, intentar crearlo
-      try {
-        const contadoresCollection = collection(firestore, 'contadores');
-        await addDoc(contadoresCollection, { 
-          id: 'tickets', 
-          ultimoTicket: 0 
-        });
-        return 0;
-      } catch (createError) {
-        console.error('Error al crear contador de tickets:', createError);
-        return 0;
-      }
-    }
-  };
-
-  // Actualizar el contador de tickets
-  const actualizarContadorTickets = async (nuevoValor) => {
-    try {
-      const contadoresRef = doc(firestore, 'contadores', 'tickets');
-      await updateDoc(contadoresRef, { ultimoTicket: nuevoValor });
-    } catch (error) {
-      console.error('Error al actualizar contador:', error);
-      // Si falla, intentar crear el documento
-      try {
-        const contadoresCollection = collection(firestore, 'contadores');
-        await addDoc(contadoresCollection, { id: 'tickets', ultimoTicket: nuevoValor });
-      } catch (createError) {
-        console.error('Error al crear contador de tickets:', createError);
-      }
+      return 0; // Si hay error, comenzar desde 0
     }
   };
 
@@ -353,9 +329,6 @@ const ReporteFallasScreen = () => {
       };
 
       await addDoc(collection(firestore, 'fallas'), fallaData);
-      
-      // Actualizar el contador de tickets
-      await actualizarContadorTickets(nuevoNumeroTicket);
 
       alert(`Éxito: Falla reportada correctamente. Ticket #${nuevoNumeroTicket}`);
       
@@ -799,14 +772,14 @@ const ReporteFallasScreen = () => {
                       </>
                     )}
                   </button>
-                )}
-              </div>
-            )}
-          </div>
+                
+            )}</div>
+          )}
         </div>
-      )}
-    </div>
-  );
+      </div>
+    )}
+  </div>
+);
 };
 
 export default ReporteFallasScreen;

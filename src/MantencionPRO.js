@@ -21,6 +21,9 @@ import DisponibilidadScreen from './components/DisponibilidadScreen';
 import ReporteFallasScreen from './components/ReporteFallasScreen';
 import Home from './components/Home';
 
+// Import NavigationManager
+import NavigationHelper from './NavigationManager';
+
 // Initialize Firebase services
 const auth = getAuth(firebaseApp);
 const firestore = getFirestore(firebaseApp);
@@ -36,6 +39,7 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [currentTab, setCurrentTab] = useState(0);
   const [error, setError] = useState(null);
+  const [isNavigating, setIsNavigating] = useState(false);
   
   // Hooks
   const navigate = useNavigate();
@@ -45,6 +49,76 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
   // Responsive design hooks
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
+  // Initialize NavigationHelper with a hybrid navigation object
+  useEffect(() => {
+    // Create a hybrid navigation object that works with both our system and React Router
+    const hybridNavigation = {
+      navigate: (routeName, params = {}) => {
+        if (isNavigating) return false;
+        
+        try {
+          setIsNavigating(true);
+          
+          // Handle special navigation case for tabs
+          if (routeName.toLowerCase() === 'inventario') {
+            // Find tab index for Inventario
+            const tabIndex = tabs.findIndex(tab => tab.label === 'Inventario');
+            if (tabIndex >= 0) {
+              setTimeout(() => {
+                setCurrentTab(tabIndex);
+                setIsNavigating(false);
+              }, 100);
+              return true;
+            }
+          } else if (routeName.toLowerCase() === 'mantencion' || 
+                     routeName.toLowerCase() === 'mantencionscreen') {
+            // Find tab index for Mantención
+            const tabIndex = tabs.findIndex(tab => tab.label === 'Mantención');
+            if (tabIndex >= 0) {
+              setTimeout(() => {
+                setCurrentTab(tabIndex);
+                setIsNavigating(false);
+              }, 100);
+              return true;
+            }
+          }
+          
+          // For other routes, use React Router's navigate
+          setTimeout(() => {
+            navigate(routeName.toLowerCase(), { state: params });
+            setIsNavigating(false);
+          }, 100);
+          
+          return true;
+        } catch (error) {
+          console.error("Navigation error:", error);
+          setIsNavigating(false);
+          return false;
+        }
+      },
+      goBack: () => {
+        if (isNavigating) return false;
+        
+        try {
+          setIsNavigating(true);
+          
+          setTimeout(() => {
+            navigate(-1);
+            setIsNavigating(false);
+          }, 100);
+          
+          return true;
+        } catch (error) {
+          console.error("Navigation back error:", error);
+          setIsNavigating(false);
+          return false;
+        }
+      }
+    };
+    
+    NavigationHelper.initialize(hybridNavigation);
+  }, [navigate, isNavigating]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -174,18 +248,6 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
     };
   }, [propUserData, navigate]);
 
-  // Tab change handler
-  const handleTabChange = (event, newValue) => {
-    setCurrentTab(newValue);
-  };
-
-  // Function to navigate to a specific tab (passed to child components)
-  const navigateToTab = (tabIndex) => {
-    if (tabIndex >= 0 && tabIndex < tabs.length) {
-      setCurrentTab(tabIndex);
-    }
-  };
-
   // Define tabs based on user role - memoized to prevent unnecessary recalculations
   const tabs = useMemo(() => {
     switch (userRole) {
@@ -213,6 +275,33 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
     }
   }, [userRole]);
 
+  // Tab change handler - with protection against rapid tab switching
+  const handleTabChange = (event, newValue) => {
+    if (isNavigating) return; // Prevent tab change during navigation
+    
+    setIsNavigating(true);
+    
+    // Add a small delay to ensure proper cleanup
+    setTimeout(() => {
+      setCurrentTab(newValue);
+      setIsNavigating(false);
+    }, 100);
+  };
+
+  // Safe function to navigate to a specific tab (passed to child components)
+  const navigateToTab = (tabIndex) => {
+    if (isNavigating) return;
+    
+    if (tabIndex >= 0 && tabIndex < tabs.length) {
+      setIsNavigating(true);
+      
+      setTimeout(() => {
+        setCurrentTab(tabIndex);
+        setIsNavigating(false);
+      }, 100);
+    }
+  };
+
   // Loading state UI
   if (isLoading) {
     return (
@@ -227,11 +316,58 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
 
   console.log("Rendering interface for role:", userRole);
 
+  // Prepare route parameters from location
+  const extractRouteParams = () => {
+    const params = {};
+    
+    // Get params from location search
+    if (location.search) {
+      const searchParams = new URLSearchParams(location.search);
+      for (const [key, value] of searchParams.entries()) {
+        try {
+          params[key] = JSON.parse(value);
+        } catch (e) {
+          params[key] = value;
+        }
+      }
+    }
+    
+    // Get params from location state
+    if (location.state) {
+      Object.assign(params, location.state);
+    }
+    
+    return { params };
+  };
+
+  // Create navigation object to pass to components
+  const navigationObject = {
+    navigate: (routeName, params) => NavigationHelper.navigate(routeName, params),
+    goBack: () => NavigationHelper.goBack()
+  };
+
+  // Create route object to pass to components
+  const routeObject = extractRouteParams();
+
   // Get current component based on selected tab
   const CurrentComponent = tabs[currentTab].component;
 
+  // Navigation in progress overlay
+  const NavigationOverlay = () => (
+    isNavigating && (
+      <div style={styles.navigationOverlay}>
+        <div className="spinner-border text-primary" style={styles.navigationSpinner} role="status">
+          <span className="visually-hidden">Navegando...</span>
+        </div>
+      </div>
+    )
+  );
+
   return (
     <div style={styles.container}>
+      {/* Navigation overlay */}
+      <NavigationOverlay />
+      
       {/* Error message if any */}
       {error && (
         <div style={styles.errorContainer}>
@@ -254,6 +390,10 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
           onNavigateToTab={navigateToTab}
           location={location}
           navigate={navigate}
+          // Add our navigation props for compatibility with InventarioScreen and MantencionScreen
+          navigation={navigationObject}
+          route={routeObject}
+          isNavigating={isNavigating}
         />
       </div>
       
@@ -291,10 +431,19 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
                 }
               }}
               aria-label={tab.label}
+              disabled={isNavigating} // Disable tabs during navigation
             />
           ))}
         </Tabs>
       </div>
+      
+      {/* Add global styles for navigation animations */}
+      <style>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 };
@@ -309,7 +458,8 @@ const styles = {
   },
   content: {
     flex: 1,
-    overflowY: 'auto'
+    overflowY: 'auto',
+    position: 'relative'
   },
   tabContainer: {
     borderTop: '1px solid #e0e0e0',
@@ -348,6 +498,22 @@ const styles = {
     padding: '8px 16px',
     fontWeight: 'bold',
     cursor: 'pointer',
+  },
+  navigationOverlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+  },
+  navigationSpinner: {
+    width: '3rem',
+    height: '3rem',
   }
 };
 
