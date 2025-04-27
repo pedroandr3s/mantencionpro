@@ -41,7 +41,6 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
     equiposOperativos: 0,
     mantencionesPendientes: 0,
     inventarioBajo: 0,
-    proximaMantencion: 'No disponible',
     equiposDisponibles: 0
   });
   const [recentActivities, setRecentActivities] = useState([]);
@@ -76,27 +75,6 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
       const equiposDisponibles = equiposSnapshot.docs.filter(doc => 
         doc.data().estadoDisponibilidad === 'disponible'
       ).length;
-      
-      // Find equipment with closest maintenance date
-      let proximaMantencion = 'No disponible';
-      const today = new Date();
-      let closestDate = null;
-      
-      equiposSnapshot.docs.forEach(doc => {
-        const equipoData = doc.data();
-        if (equipoData.proximoMantenimiento) {
-          const mantenimientoDate = new Date(equipoData.proximoMantenimiento);
-          if (mantenimientoDate > today && (!closestDate || mantenimientoDate < closestDate)) {
-            closestDate = mantenimientoDate;
-          }
-        }
-      });
-      
-      if (closestDate) {
-        const diffTime = Math.abs(closestDate - today);
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        proximaMantencion = diffDays > 1 ? `${diffDays} días` : '1 día';
-      }
 
       // Only load additional data for admin and mechanic roles
       let mantencionesPendientes = 0;
@@ -105,6 +83,7 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
       if (userRole === 'admin' || userRole === 'mecanico') {
         // Get pending maintenance count
         try {
+          // Contar mantenciones pendientes de la colección mantenimientos
           const mantencionesRef = collection(firestore, 'mantenimientos');
           const mantencionesQuery = query(
             mantencionesRef, 
@@ -112,6 +91,37 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
           );
           const mantencionesSnapshot = await getDocs(mantencionesQuery);
           mantencionesPendientes = mantencionesSnapshot.size;
+          
+          // NUEVO: Contar también las fallas con estado pendiente
+          const fallasRef = collection(firestore, 'fallas');
+          const fallasQuery = query(
+            fallasRef,
+            where('estado', '==', 'pendiente')
+          );
+          const fallasSnapshot = await getDocs(fallasQuery);
+          // También contar fallas que tengan estado pendiente en su último historial
+          const fallasConHistorialPendiente = [];
+          const todasLasFallasQuery = query(fallasRef);
+          const todasLasFallasSnapshot = await getDocs(todasLasFallasQuery);
+          
+          todasLasFallasSnapshot.docs.forEach(doc => {
+            const falla = doc.data();
+            if (falla.historial && falla.historial.length > 0) {
+              const ultimoEstado = falla.historial[falla.historial.length - 1];
+              if (ultimoEstado.estado === 'pendiente') {
+                fallasConHistorialPendiente.push(doc.id);
+              }
+            }
+          });
+          
+          // Sumamos las fallas con estado pendiente más las que tienen el último historial como pendiente
+          // (evitando contar duplicados)
+          const fallasIds = new Set([
+            ...fallasSnapshot.docs.map(doc => doc.id),
+            ...fallasConHistorialPendiente
+          ]);
+          
+          mantencionesPendientes += fallasIds.size;
           
           // Get recent activities
           const recentMaintenanceQuery = query(
@@ -172,7 +182,6 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
         equiposOperativos,
         mantencionesPendientes,
         inventarioBajo,
-        proximaMantencion,
         equiposDisponibles
       });
 
@@ -189,7 +198,8 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
     <Card className="stat-card" elevation={2}>
       <CardContent>
         <Box display="flex" flexDirection={isMobile ? 'column' : 'row'} 
-             justifyContent="space-between" alignItems="center" className="stat-card-content">
+             justifyContent="space-between" alignItems="center" className="stat-card-content"
+             sx={{ height: isMobile ? '100%' : 'auto' }}>
           <Box textAlign={isMobile ? 'center' : 'left'} mb={isMobile ? 2 : 0}>
             <Typography variant={isMobile ? 'body1' : 'h6'} color="textSecondary" className="stat-title">
               {title}
@@ -305,8 +315,8 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
     
     return (
       <>
-        <Grid container spacing={isMobile ? 2 : 3}>
-          <Grid item xs={12} sm={6} md={3}>
+        <Grid container spacing={isMobile ? 2 : 3} className="equal-height-cards">
+          <Grid item xs={12} sm={6} md={4}>
             <StatCard
               title="Equipos Operativos"
               value={stats.equiposOperativos}
@@ -314,7 +324,7 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
               color="#4CAF50"
             />
           </Grid>
-          <Grid item xs={12} sm={6} md={3}>
+          <Grid item xs={12} sm={6} md={4}>
             <StatCard
               title="Mantenciones Pendientes"
               value={stats.mantencionesPendientes}
@@ -322,20 +332,12 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
               color="#FF9800"
             />
           </Grid>
-          <Grid item xs={12} sm={6} md={3}>
+          <Grid item xs={12} sm={6} md={4}>
             <StatCard
               title="Inventario Bajo"
               value={stats.inventarioBajo}
               icon={<InventoryIcon />}
               color="#F44336"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <StatCard
-              title="Próxima Mantención"
-              value={stats.proximaMantencion}
-              icon={<CheckCircleIcon />}
-              color="#2196F3"
             />
           </Grid>
         </Grid>
