@@ -18,7 +18,11 @@ import {
   Collapse,
   InputAdornment,
   Paper,
-  Fab
+  Fab,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -30,7 +34,8 @@ import {
   Warning as WarningIcon,
   Close as CloseIcon,
   AddCircle as AddCircleIcon,
-  ChevronRight as ChevronRightIcon
+  ChevronRight as ChevronRightIcon,
+  FilterAlt as FilterAltIcon
 } from '@mui/icons-material';
 import { getAuth } from 'firebase/auth';
 import { 
@@ -53,6 +58,9 @@ import NavigationHelper, { withNavigationProtection } from '../NavigationManager
 const firestore = getFirestore(firebaseApp);
 const auth = getAuth(firebaseApp);
 
+// Categorías predefinidas para el Combo Box
+const CATEGORIAS_PREDEFINIDAS = ['Todas', 'Lubricantes', 'Neumáticos', 'Repuestos'];
+
 const InventarioScreen = ({ navigation, route }) => {
   // Inicializar NavigationHelper
   useEffect(() => {
@@ -67,6 +75,7 @@ const InventarioScreen = ({ navigation, route }) => {
   // Estado para los repuestos e insumos
   const [inventario, setInventario] = useState([]);
   const [busqueda, setBusqueda] = useState('');
+  const [categoriaSeleccionada, setCategoriaSeleccionada] = useState('Todas');
   const [modalVisible, setModalVisible] = useState(false);
   const [historialModalVisible, setHistorialModalVisible] = useState(false);
   const [itemSeleccionado, setItemSeleccionado] = useState(null);
@@ -208,12 +217,26 @@ const InventarioScreen = ({ navigation, route }) => {
     };
   }, []);
 
-  // Filtrar inventario según término de búsqueda
-  const inventarioFiltrado = inventario.filter(item => 
-    item.nombre?.toLowerCase().includes(busqueda.toLowerCase()) ||
-    item.codigo?.toLowerCase().includes(busqueda.toLowerCase()) ||
-    item.categoria?.toLowerCase().includes(busqueda.toLowerCase())
-  );
+  // Función para manejar el cambio de categoría seleccionada
+  const handleCategoriaChange = (event) => {
+    if (!isMounted.current || isNavigatingRef.current) return;
+    safeSetState(setCategoriaSeleccionada, event.target.value);
+  };
+
+  // Filtrar inventario según término de búsqueda y categoría seleccionada
+  const inventarioFiltrado = inventario.filter(item => {
+    // Filtrar por término de búsqueda
+    const cumpleBusqueda = 
+      item.nombre?.toLowerCase().includes(busqueda.toLowerCase()) ||
+      item.codigo?.toLowerCase().includes(busqueda.toLowerCase()) ||
+      item.categoria?.toLowerCase().includes(busqueda.toLowerCase());
+    
+    // Filtrar por categoría seleccionada
+    const cumpleCategoria = categoriaSeleccionada === 'Todas' || 
+      (item.categoria && item.categoria.toLowerCase() === categoriaSeleccionada.toLowerCase());
+    
+    return cumpleBusqueda && cumpleCategoria;
+  });
 
   // Función para abrir el formulario para agregar un nuevo ítem
   const handleAddItem = () => {
@@ -716,20 +739,47 @@ const InventarioScreen = ({ navigation, route }) => {
           {route?.params?.seleccionarRepuestos ? 'Seleccionar Repuestos' : 'Inventario'}
         </Typography>
         
-        <TextField
-          fullWidth
-          variant="outlined"
-          placeholder="Buscar repuesto o insumo..."
-          value={busqueda}
-          onChange={(e) => !isNavigatingRef.current && safeSetState(setBusqueda, e.target.value)}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon />
-              </InputAdornment>
-            ),
-          }}
-        />
+        <Grid container spacing={2} sx={{ mb: 2 }}>
+          <Grid item xs={12} sm={8}>
+            <TextField
+              fullWidth
+              variant="outlined"
+              placeholder="Buscar repuesto o insumo..."
+              value={busqueda}
+              onChange={(e) => !isNavigatingRef.current && safeSetState(setBusqueda, e.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon />
+                  </InputAdornment>
+                ),
+              }}
+            />
+          </Grid>
+          <Grid item xs={12} sm={4}>
+            <FormControl fullWidth>
+              <InputLabel id="categoria-select-label">Categoría</InputLabel>
+              <Select
+                labelId="categoria-select-label"
+                id="categoria-select"
+                value={categoriaSeleccionada}
+                label="Categoría"
+                onChange={handleCategoriaChange}
+                startAdornment={
+                  <InputAdornment position="start">
+                    <FilterAltIcon />
+                  </InputAdornment>
+                }
+              >
+                {CATEGORIAS_PREDEFINIDAS.map((categoria) => (
+                  <MenuItem key={categoria} value={categoria}>
+                    {categoria}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+        </Grid>
       </Box>
       
       {errorMsg && (
@@ -762,7 +812,20 @@ const InventarioScreen = ({ navigation, route }) => {
                     <Typography variant="h6" gutterBottom>
                       {item.nombre}
                     </Typography>
-                    <Chip label={item.codigo} size="small" sx={{ mb: 1 }} />
+                    <Chip label={item.codigo} size="small" sx={{ mb: 1, mr: 1 }} />
+                    {item.categoria && (
+                      <Chip 
+                        label={item.categoria} 
+                        size="small" 
+                        sx={{ mb: 1 }} 
+                        color={
+                          item.categoria.toLowerCase() === 'lubricantes' ? 'primary' : 
+                          item.categoria.toLowerCase() === 'neumáticos' ? 'secondary' : 
+                          item.categoria.toLowerCase() === 'repuestos' ? 'success' : 
+                          'default'
+                        }
+                      />
+                    )}
                   </div>
                   
                   {!route?.params?.seleccionarRepuestos && (
@@ -934,6 +997,10 @@ const InventarioScreen = ({ navigation, route }) => {
           </DialogTitle>
           <DialogContent>
             <Box sx={{ mt: 2 }}>
+              <Typography variant="subtitle1" color="primary" gutterBottom sx={{ fontWeight: 'bold', borderBottom: '1px solid #eee', pb: 1, mb: 2 }}>
+                Información del Producto
+              </Typography>
+              
               <Grid container spacing={2}>
                 <Grid item xs={12}>
                   <TextField
@@ -943,6 +1010,7 @@ const InventarioScreen = ({ navigation, route }) => {
                     onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, nombre: e.target.value})}
                     placeholder="Nombre del repuesto o insumo"
                     disabled={isNavigatingRef.current}
+                    required
                   />
                 </Grid>
                 
@@ -954,22 +1022,68 @@ const InventarioScreen = ({ navigation, route }) => {
                     onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, codigo: e.target.value})}
                     placeholder="Código de referencia"
                     disabled={isNavigatingRef.current}
+                    required
                   />
                 </Grid>
                 
-                <Grid item xs={12} sm={6}>
+                <Grid item xs={12}>
+                  <FormControl fullWidth variant="outlined" sx={{ mt: 1, mb: 1 }}>
+                    <InputLabel shrink htmlFor="categoria-select">Categoría</InputLabel>
+                    <Select
+                      native
+                      id="categoria-select"
+                      value={formData.categoria}
+                      onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, categoria: e.target.value})}
+                      disabled={isNavigatingRef.current}
+                      inputProps={{
+                        id: 'categoria-select',
+                        name: 'categoria',
+                      }}
+                    >
+                      <option value="" disabled>Seleccionar categoría</option>
+                      {CATEGORIAS_PREDEFINIDAS.filter(cat => cat !== 'Todas').map((categoria) => (
+                        <option key={categoria} value={categoria}>
+                          {categoria}
+                        </option>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                
+                <Grid item xs={12}>
                   <TextField
                     fullWidth
-                    label="Cantidad *"
+                    label="Unidad"
+                    value={formData.unidad}
+                    onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, unidad: e.target.value})}
+                    placeholder="Ej: litros, unidades, piezas, etc."
+                    disabled={isNavigatingRef.current}
+                  />
+                </Grid>
+              </Grid>
+              
+              <Typography variant="subtitle1" color="primary" gutterBottom sx={{ fontWeight: 'bold', borderBottom: '1px solid #eee', pb: 1, mt: 4, mb: 2 }}>
+                Información de Stock
+              </Typography>
+              
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Cantidad Actual *"
                     type="number"
                     value={formData.cantidad}
                     onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, cantidad: e.target.value})}
                     placeholder="Cantidad disponible"
                     disabled={isNavigatingRef.current}
+                    InputProps={{
+                      endAdornment: <InputAdornment position="end">{formData.unidad || 'unidades'}</InputAdornment>,
+                    }}
+                    required
                   />
                 </Grid>
                 
-                <Grid item xs={12} sm={6}>
+                <Grid item xs={12}>
                   <TextField
                     fullWidth
                     label="Cantidad Mínima"
@@ -978,39 +1092,28 @@ const InventarioScreen = ({ navigation, route }) => {
                     onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, minimo: e.target.value})}
                     placeholder="Cantidad mínima recomendada"
                     disabled={isNavigatingRef.current}
+                    InputProps={{
+                      endAdornment: <InputAdornment position="end">{formData.unidad || 'unidades'}</InputAdornment>,
+                    }}
+                    helperText="Nivel para alertas de stock bajo"
                   />
                 </Grid>
-                
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    label="Unidad"
-                    value={formData.unidad}
-                    onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, unidad: e.target.value})}
-                    placeholder="Unidad (litros, unidades, etc.)"
-                    disabled={isNavigatingRef.current}
-                  />
-                </Grid>
-                
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    label="Categoría"
-                    value={formData.categoria}
-                    onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, categoria: e.target.value})}
-                    placeholder="Categoría del ítem"
-                    disabled={isNavigatingRef.current}
-                  />
-                </Grid>
-                
+              </Grid>
+              
+              <Typography variant="subtitle1" color="primary" gutterBottom sx={{ fontWeight: 'bold', borderBottom: '1px solid #eee', pb: 1, mt: 4, mb: 2 }}>
+                Información de Ubicación
+              </Typography>
+              
+              <Grid container spacing={2}>
                 <Grid item xs={12}>
                   <TextField
                     fullWidth
                     label="Ubicación"
                     value={formData.ubicacion}
                     onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, ubicacion: e.target.value})}
-                    placeholder="Ubicación en almacén"
+                    placeholder="Ej: Estante A, Bodega 2, etc."
                     disabled={isNavigatingRef.current}
+                    helperText="Ubicación en almacén o bodega"
                   />
                 </Grid>
                 
@@ -1020,7 +1123,7 @@ const InventarioScreen = ({ navigation, route }) => {
                     label="Proveedor"
                     value={formData.proveedor}
                     onChange={(e) => !isNavigatingRef.current && safeSetState(setFormData, {...formData, proveedor: e.target.value})}
-                    placeholder="Proveedor"
+                    placeholder="Nombre del proveedor"
                     disabled={isNavigatingRef.current}
                   />
                 </Grid>
@@ -1134,7 +1237,14 @@ const InventarioScreen = ({ navigation, route }) => {
                         </Grid>
                         
                         <Box display="flex" justifyContent="flex-end" mt={1}>
-                          
+                          <Button
+                            size="small"
+                            endIcon={<ChevronRightIcon />}
+                            onClick={() => !isNavigatingRef.current && navegarAMantenimiento(registro.mantenimientoId)}
+                            disabled={isNavigatingRef.current}
+                          >
+                            Ver mantenimiento
+                          </Button>
                         </Box>
                       </Paper>
                     ))
