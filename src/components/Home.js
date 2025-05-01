@@ -21,12 +21,14 @@ import {
   CheckCircle as CheckCircleIcon,
   Warning as WarningIcon,
   Logout as LogoutIcon,
-  Refresh as RefreshIcon
+  Refresh as RefreshIcon,
+  People as PeopleIcon
 } from '@mui/icons-material';
 import { getAuth, signOut } from 'firebase/auth';
 import { getFirestore, collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
 import firebaseApp from '../firebase/credenciales';
 import './Home.css';
+import NavigationHelper from '../NavigationManager';
 
 const auth = getAuth(firebaseApp);
 const firestore = getFirestore(firebaseApp);
@@ -269,6 +271,11 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
     </Box>
   );
 
+  // Navigate to Trabajadores screen
+  const handleNavigateToTrabajadores = () => {
+    NavigationHelper.navigate('trabajadores');
+  };
+
   // View for driver role
   const renderDriverView = () => {
     // Find the index of "Reportar Falla" tab for drivers
@@ -373,6 +380,23 @@ const Home = ({ userRole, userData, onLogout, onNavigateToTab }) => {
                 Gestionar Inventario
               </Button>
             </Grid>
+            
+            {/* Admin-only button for Workers Management */}
+            {userRole === 'admin' && (
+              <Grid item xs={12} mt={2}>
+                <Button
+                  variant="contained"
+                  color="info"
+                  fullWidth
+                  startIcon={<PeopleIcon />}
+                  className="action-button"
+                  onClick={handleNavigateToTrabajadores}
+                  sx={{ py: 1.5, borderRadius: 2 }}
+                >
+                  Ver Trabajadores
+                </Button>
+              </Grid>
+            )}
           </Grid>
         </Box>
         

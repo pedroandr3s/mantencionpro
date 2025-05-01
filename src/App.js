@@ -7,8 +7,8 @@ import Login from './components/Login';
 import LoadingBridge from './components/LoadingBridge';
 
 // Importar Firebase
-import { getAuth, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, getDoc } from 'firebase/firestore';
+import { getAuth, onAuthStateChanged, signOut } from 'firebase/auth';
+import { getFirestore, doc, getDoc, onSnapshot } from 'firebase/firestore';
 import firebaseApp from './firebase/credenciales';
 
 // Importar NavigationProvider
@@ -79,6 +79,7 @@ const App = () => {
   const [userData, setUserData] = useState(null);
   const [navigationObject] = useState(createNavigationCompatibilityLayer());
   const [routeObject] = useState(extractUrlParams());
+  const [forcedLogoutListener, setForcedLogoutListener] = useState(null);
 
   // Configurar el manejador de errores global
   useEffect(() => {
@@ -100,6 +101,9 @@ const App = () => {
           
           if (user) {
             console.log("App: Usuario autenticado, obteniendo datos de Firestore...");
+            
+            // Configurar listener para cierre forzado de sesión
+            setupForcedLogoutListener(user.uid);
             
             // Intentar obtener datos de Firestore primero
             try {
@@ -163,6 +167,11 @@ const App = () => {
             console.log("App: No hay usuario autenticado");
             setIsLoggedIn(false);
             setUserData(null);
+            // Eliminar listener de cierre forzado si existe
+            if (forcedLogoutListener) {
+              forcedLogoutListener();
+              setForcedLogoutListener(null);
+            }
           }
           
           if (isMounted) {
@@ -185,26 +194,68 @@ const App = () => {
     }, 500);
     
     return () => {
-      isMounted = false;
+      isMounted = true;
       clearTimeout(timer);
       if (authUnsubscribe) {
         authUnsubscribe();
       }
+      // Limpiar listener de cierre forzado
+      if (forcedLogoutListener) {
+        forcedLogoutListener();
+      }
     };
   }, []);
 
+  // Configurar listener para cierre forzado de sesión
+  const setupForcedLogoutListener = (uid) => {
+    // Limpiar listener anterior si existe
+    if (forcedLogoutListener) {
+      forcedLogoutListener();
+    }
+
+    // Crear listener para documento de cierre forzado
+    const unsubscribe = onSnapshot(
+      doc(firestore, 'forcedLogouts', uid),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          const currentTime = new Date().getTime();
+          
+          // Si el documento de cierre forzado fue creado recientemente (en los últimos 5 minutos)
+          if (data.timestamp && (currentTime - data.timestamp < 5 * 60 * 1000)) {
+            console.log("App: Cierre forzado de sesión detectado:", data.reason);
+            handleLogout(true);
+          }
+        }
+      },
+      (error) => {
+        console.error("App: Error en listener de cierre forzado:", error);
+      }
+    );
+
+    setForcedLogoutListener(() => unsubscribe);
+  };
+
   // Función para manejar el cierre de sesión
-  const handleLogout = async () => {
+  const handleLogout = async (isForcedLogout = false) => {
     try {
       console.log("App: Cerrando sesión...");
       // Cerrar sesión en Firebase
-      await auth.signOut();
+      await signOut(auth);
       
       // Eliminar datos del usuario del almacenamiento local
       localStorage.removeItem('userData');
       
       setUserData(null);
       setIsLoggedIn(false);
+      
+      // Mostrar mensaje si fue cierre forzado
+      if (isForcedLogout) {
+        alert("Tu sesión ha sido cerrada por un administrador");
+        // Redirigir a login
+        window.location.href = '/login';
+      }
+      
       console.log("App: Sesión cerrada con éxito");
     } catch (error) {
       console.error('App: Error al cerrar sesión:', error);

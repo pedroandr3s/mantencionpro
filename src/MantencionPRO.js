@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { Tab, Tabs, useMediaQuery, useTheme } from '@mui/material';
 import HomeIcon from '@mui/icons-material/Home';
 import InventoryIcon from '@mui/icons-material/Inventory';
@@ -19,6 +19,7 @@ import EquiposScreen from './components/EquiposScreen';
 import MantencionScreen from './components/MantencionScreen';
 import DisponibilidadScreen from './components/DisponibilidadScreen';
 import ReporteFallasScreen from './components/ReporteFallasScreen';
+import TrabajadoresScreen from './components/TrabajadoresScreen';
 import Home from './components/Home';
 
 // Import NavigationManager
@@ -40,6 +41,8 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
   const [currentTab, setCurrentTab] = useState(0);
   const [error, setError] = useState(null);
   const [isNavigating, setIsNavigating] = useState(false);
+  const [showTabNav, setShowTabNav] = useState(true);
+  const [currentScreen, setCurrentScreen] = useState(null);
   
   // Hooks
   const navigate = useNavigate();
@@ -49,6 +52,33 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
   // Responsive design hooks
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
+  // Define tabs based on user role - memoized to prevent unnecessary recalculations
+  const tabs = useMemo(() => {
+    switch (userRole) {
+      case 'admin':
+      case 'mecanico':
+        return [
+          { label: 'Home', icon: <HomeIcon />, component: Home },
+          { label: 'Inventario', icon: <InventoryIcon />, component: InventarioScreen },
+          { label: 'Equipos', icon: <DirectionsCarIcon />, component: EquiposScreen },
+          { label: 'Mantención', icon: <BuildIcon />, component: MantencionScreen },
+          { label: 'Disponibilidad', icon: <CheckCircleIcon />, component: DisponibilidadScreen },
+          { label: 'Reportes', icon: <WarningIcon />, component: ReporteFallasScreen }
+        ];
+      case 'conductor':
+        return [
+          { label: 'Home', icon: <HomeIcon />, component: Home },
+          { label: 'Disponibilidad', icon: <CheckCircleIcon />, component: DisponibilidadScreen },
+          { label: 'Reportar Falla', icon: <WarningIcon />, component: ReporteFallasScreen }
+        ];
+      default:
+        return [
+          { label: 'Home', icon: <HomeIcon />, component: Home },
+          { label: 'Disponibilidad', icon: <CheckCircleIcon />, component: DisponibilidadScreen }
+        ];
+    }
+  }, [userRole]);
 
   // Initialize NavigationHelper with a hybrid navigation object
   useEffect(() => {
@@ -66,6 +96,8 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
             const tabIndex = tabs.findIndex(tab => tab.label === 'Inventario');
             if (tabIndex >= 0) {
               setTimeout(() => {
+                setCurrentScreen(null);
+                setShowTabNav(true);
                 setCurrentTab(tabIndex);
                 setIsNavigating(false);
               }, 100);
@@ -77,11 +109,30 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
             const tabIndex = tabs.findIndex(tab => tab.label === 'Mantención');
             if (tabIndex >= 0) {
               setTimeout(() => {
+                setCurrentScreen(null);
+                setShowTabNav(true);
                 setCurrentTab(tabIndex);
                 setIsNavigating(false);
               }, 100);
               return true;
             }
+          } else if (routeName.toLowerCase() === 'trabajadores') {
+            // Special case for Trabajadores screen (not a tab)
+            setTimeout(() => {
+              setCurrentScreen('trabajadores');
+              setShowTabNav(false);
+              setIsNavigating(false);
+            }, 100);
+            return true;
+          } else if (routeName.toLowerCase() === 'mantencionpro') {
+            // Navigate back to home tab
+            setTimeout(() => {
+              setCurrentScreen(null);
+              setShowTabNav(true);
+              setCurrentTab(0); // Home tab index
+              setIsNavigating(false);
+            }, 100);
+            return true;
           }
           
           // For other routes, use React Router's navigate
@@ -103,6 +154,18 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
         try {
           setIsNavigating(true);
           
+          // If we're in a special screen, go back to the tabs
+          if (currentScreen) {
+            setTimeout(() => {
+              setCurrentScreen(null);
+              setShowTabNav(true);
+              setCurrentTab(0); // Default to Home tab
+              setIsNavigating(false);
+            }, 100);
+            return true;
+          }
+          
+          // Otherwise use standard navigation
           setTimeout(() => {
             navigate(-1);
             setIsNavigating(false);
@@ -118,7 +181,7 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
     };
     
     NavigationHelper.initialize(hybridNavigation);
-  }, [navigate, isNavigating]);
+  }, [navigate, isNavigating, currentScreen, tabs]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -248,33 +311,6 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
     };
   }, [propUserData, navigate]);
 
-  // Define tabs based on user role - memoized to prevent unnecessary recalculations
-  const tabs = useMemo(() => {
-    switch (userRole) {
-      case 'admin':
-      case 'mecanico':
-        return [
-          { label: 'Home', icon: <HomeIcon />, component: Home },
-          { label: 'Inventario', icon: <InventoryIcon />, component: InventarioScreen },
-          { label: 'Equipos', icon: <DirectionsCarIcon />, component: EquiposScreen },
-          { label: 'Mantención', icon: <BuildIcon />, component: MantencionScreen },
-          { label: 'Disponibilidad', icon: <CheckCircleIcon />, component: DisponibilidadScreen },
-          { label: 'Reportes', icon: <WarningIcon />, component: ReporteFallasScreen }
-        ];
-      case 'conductor':
-        return [
-          { label: 'Home', icon: <HomeIcon />, component: Home },
-          { label: 'Disponibilidad', icon: <CheckCircleIcon />, component: DisponibilidadScreen },
-          { label: 'Reportar Falla', icon: <WarningIcon />, component: ReporteFallasScreen }
-        ];
-      default:
-        return [
-          { label: 'Home', icon: <HomeIcon />, component: Home },
-          { label: 'Disponibilidad', icon: <CheckCircleIcon />, component: DisponibilidadScreen }
-        ];
-    }
-  }, [userRole]);
-
   // Tab change handler - with protection against rapid tab switching
   const handleTabChange = (event, newValue) => {
     if (isNavigating) return; // Prevent tab change during navigation
@@ -296,6 +332,8 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
       setIsNavigating(true);
       
       setTimeout(() => {
+        setCurrentScreen(null);
+        setShowTabNav(true);
         setCurrentTab(tabIndex);
         setIsNavigating(false);
       }, 100);
@@ -363,6 +401,34 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
     )
   );
 
+  // Render special screens or tab-based content
+  const renderContent = () => {
+    if (currentScreen === 'trabajadores') {
+      return (
+        <TrabajadoresScreen 
+          userRole={userRole}
+          userData={userInfo}
+          navigation={navigationObject}
+          route={routeObject}
+        />
+      );
+    } else {
+      return (
+        <CurrentComponent 
+          userRole={userRole} 
+          userData={userInfo} 
+          onLogout={onLogout}
+          onNavigateToTab={navigateToTab}
+          location={location}
+          navigate={navigate}
+          navigation={navigationObject}
+          route={routeObject}
+          isNavigating={isNavigating}
+        />
+      );
+    }
+  };
+
   return (
     <div style={styles.container}>
       {/* Navigation overlay */}
@@ -383,59 +449,50 @@ const MantencionPRO = ({ userData: propUserData, onLogout }) => {
       
       {/* Main content area */}
       <div style={styles.content}>
-        <CurrentComponent 
-          userRole={userRole} 
-          userData={userInfo} 
-          onLogout={onLogout}
-          onNavigateToTab={navigateToTab}
-          location={location}
-          navigate={navigate}
-          // Add our navigation props for compatibility with InventarioScreen and MantencionScreen
-          navigation={navigationObject}
-          route={routeObject}
-          isNavigating={isNavigating}
-        />
+        {renderContent()}
       </div>
       
-      {/* Bottom navigation tabs */}
-      <div style={styles.tabContainer}>
-        <Tabs
-          value={currentTab}
-          onChange={handleTabChange}
-          variant="fullWidth"
-          centered
-          sx={{
-            '& .MuiTab-root': {
-              color: 'gray',
-              minWidth: isMobile ? '40px' : '80px',
-              padding: isMobile ? '6px 0' : '12px 16px',
-              '&.Mui-selected': {
-                color: '#1890FF',
+      {/* Bottom navigation tabs - only show if not in a special screen */}
+      {showTabNav && (
+        <div style={styles.tabContainer}>
+          <Tabs
+            value={currentTab}
+            onChange={handleTabChange}
+            variant="fullWidth"
+            centered
+            sx={{
+              '& .MuiTab-root': {
+                color: 'gray',
+                minWidth: isMobile ? '40px' : '80px',
+                padding: isMobile ? '6px 0' : '12px 16px',
+                '&.Mui-selected': {
+                  color: '#1890FF',
+                },
               },
-            },
-            '& .MuiTabs-indicator': {
-              backgroundColor: '#1890FF',
-            },
-          }}
-        >
-          {tabs.map((tab, index) => (
-            <Tab
-              key={index}
-              icon={tab.icon}
-              label={isMobile ? '' : tab.label}
-              iconPosition="top"
-              sx={{ 
-                textTransform: 'none',
-                '& .MuiSvgIcon-root': {
-                  fontSize: isMobile ? '1.2rem' : '1.5rem',
-                }
-              }}
-              aria-label={tab.label}
-              disabled={isNavigating} // Disable tabs during navigation
-            />
-          ))}
-        </Tabs>
-      </div>
+              '& .MuiTabs-indicator': {
+                backgroundColor: '#1890FF',
+              },
+            }}
+          >
+            {tabs.map((tab, index) => (
+              <Tab
+                key={index}
+                icon={tab.icon}
+                label={isMobile ? '' : tab.label}
+                iconPosition="top"
+                sx={{ 
+                  textTransform: 'none',
+                  '& .MuiSvgIcon-root': {
+                    fontSize: isMobile ? '1.2rem' : '1.5rem',
+                  }
+                }}
+                aria-label={tab.label}
+                disabled={isNavigating} // Disable tabs during navigation
+              />
+            ))}
+          </Tabs>
+        </div>
+      )}
       
       {/* Add global styles for navigation animations */}
       <style>{`

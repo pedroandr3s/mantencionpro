@@ -1134,14 +1134,7 @@ const InventarioScreen = ({ navigation, route }) => {
                         </Grid>
                         
                         <Box display="flex" justifyContent="flex-end" mt={1}>
-                          <Button
-                            size="small"
-                            endIcon={<ChevronRightIcon />}
-                            onClick={() => !isNavigatingRef.current && navegarAMantenimiento(registro.mantenimientoId)}
-                            disabled={isNavigatingRef.current}
-                          >
-                            Ver mantenimiento
-                          </Button>
+                          
                         </Box>
                       </Paper>
                     ))
